@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS users (
 c.execute("""
 CREATE TABLE IF NOT EXISTS active_q (
     user_id INTEGER PRIMARY KEY,
+    question TEXT,
     answer TEXT
 )
 """)
@@ -55,7 +56,7 @@ def get_title(msg):
 
     return titles[level] if level < len(titles) else "💠 أسطورة"
 
-# ================= SAFE QUESTION =================
+# ================= API QUESTION =================
 def get_question():
     try:
         url = "https://opentdb.com/api.php?amount=1&type=multiple"
@@ -109,13 +110,16 @@ f"""👤 معلوماتك
 
         q, a = get_question()
 
-        c.execute("REPLACE INTO active_q VALUES (?,?)", (uid, a))
+        c.execute(
+            "REPLACE INTO active_q VALUES (?,?,?)",
+            (uid, q, a)
+        )
         conn.commit()
 
         await update.message.reply_text(f"❓ {q}")
         return
 
-    # ================= ANSWER CHECK =================
+    # ================= ANSWER =================
     c.execute("SELECT answer FROM active_q WHERE user_id=?", (uid,))
     active = c.fetchone()
 
@@ -131,7 +135,7 @@ f"""👤 معلوماتك
         c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
         conn.commit()
 
-    # ================= UPDATE STATS =================
+    # ================= UPDATE =================
     old_title = title
 
     messages += 1
@@ -147,7 +151,7 @@ f"""👤 معلوماتك
 
     conn.commit()
 
-    # ================= LEVEL UP GLOBAL =================
+    # ================= LEVEL UP =================
     if new_title != old_title:
         if GROUP_ID != 0:
             try:
@@ -168,5 +172,5 @@ app = Application.builder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 BOT RUNNING FIXED VERSION")
+print("🚀 STABLE CLEAN BOT RUNNING")
 app.run_polling()
