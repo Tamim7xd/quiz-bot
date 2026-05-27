@@ -53,7 +53,7 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Ask question
-    if text == "سؤال":
+    if text == "سوال":
         q, a = random.choice(questions)
         active_question["q"] = q
         active_question["a"] = a
