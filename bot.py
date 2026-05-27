@@ -1,11 +1,12 @@
 import os
-import json
 import random
-import asyncio
+import sqlite3
+import json
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
     filters,
@@ -14,426 +15,300 @@ from telegram.ext import (
 # ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-GROUP_ID = os.getenv("GROUP_ID")
 
-DATA_FILE = "data.json"
+# ================= DATABASE =================
+conn = sqlite3.connect("data.db", check_same_thread=False)
+cursor = conn.cursor()
 
-# ================= LOAD DATA =================
-def load():
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {
-            "points": {},
-            "messages": {},
-            "titles": {},
-            "users": {},
-            "active_question": {}
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    name TEXT,
+    points INTEGER DEFAULT 0,
+    messages INTEGER DEFAULT 0,
+    title TEXT DEFAULT '👶 مبتدئ جداً'
+)
+""")
+conn.commit()
+
+# ================= BACKUP JSON =================
+JSON_FILE = "backup.json"
+
+def save_json():
+    data = {}
+
+    cursor.execute("SELECT * FROM users")
+    for r in cursor.fetchall():
+        data[r[0]] = {
+            "name": r[1],
+            "points": r[2],
+            "messages": r[3],
+            "title": r[4]
         }
 
-def save():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    with open(JSON_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-data = load()
-
-# ================= MEMORY =================
-all_messages = []
-state = {}
+# ================= TITLES (25) =================
+titles = [
+    (0, "👶 مبتدئ جداً"),
+    (25, "🌱 مبتدئ"),
+    (50, "🥉 متعلم"),
+    (100, "🥈 نشط"),
+    (150, "🥈 نشط جداً"),
+    (200, "🥇 جيد"),
+    (300, "🥇 جيد جداً"),
+    (400, "💎 محترف"),
+    (500, "💎 محترف 2"),
+    (600, "🔥 خبير"),
+    (750, "🔥 خبير 2"),
+    (900, "⚡ متقدم"),
+    (1100, "⚡ متقدم جداً"),
+    (1300, "🚀 قوي"),
+    (1500, "🚀 قوي جداً"),
+    (1800, "🏆 أسطورة"),
+    (2100, "🏆 أسطورة 2"),
+    (2500, "👑 ملك"),
+    (3000, "👑 ملك قوي"),
+    (3500, "👑 ملك الأساطير"),
+    (4000, "💀 خارق"),
+    (5000, "💀 خارق جداً"),
+    (6500, "🌌 أسطوري"),
+    (8000, "🌌 أسطوري جداً"),
+    (10000, "🔱 إله النقاط")
+]
 
 # ================= QUESTIONS =================
-QUESTIONS = [
-    ("ما عاصمة العراق؟", "بغداد"),
-    ("ما أكبر دولة في العالم؟", "روسيا"),
-    ("ما أطول نهر في العالم؟", "النيل"),
-    ("كم عدد الكواكب؟", "8"),
-    ("من أول نبي؟", "ادم"),
-    ("في أي قارة تقع مصر؟", "افريقيا"),
-    ("ما عاصمة فرنسا؟", "باريس"),
-    ("كم عدد أيام الأسبوع؟", "7"),
-]
+QUESTIONS = [("ما عاصمة العراق؟", "بغداد")]
+
+for i in range(1, 140):
+    a = random.randint(1, 30)
+    b = random.randint(1, 30)
+    QUESTIONS.append((f"كم {a} + {b}؟", str(a + b)))
+
+# ================= ACTIVE =================
+active_q = {}
+state = {}
 
 # ================= HELPERS =================
 def is_admin(uid):
-    return uid == ADMIN_ID
+    return int(uid) == ADMIN_ID
 
-def get_points(uid):
-    return data["points"].get(str(uid), 0)
 
-def set_points(uid, value):
-    data["points"][str(uid)] = value
-    save()
+def get_user(uid, name=""):
+    cursor.execute("SELECT points, messages FROM users WHERE user_id=?", (str(uid),))
+    row = cursor.fetchone()
 
-def add_points(uid, value):
-    set_points(uid, get_points(uid) + value)
+    if not row:
+        cursor.execute(
+            "INSERT INTO users (user_id, name) VALUES (?,?)",
+            (str(uid), name)
+        )
+        conn.commit()
+        save_json()
+        return (0, 0)
 
-def get_messages(uid):
-    return data["messages"].get(str(uid), 0)
+    return row
 
-def set_messages(uid, value):
-    data["messages"][str(uid)] = value
-    save()
+
+def update_title(uid):
+    cursor.execute("SELECT points FROM users WHERE user_id=?", (str(uid),))
+    row = cursor.fetchone()
+    if not row:
+        return
+
+    points = row[0]
+    title = titles[0][1]
+
+    for p, t in titles:
+        if points >= p:
+            title = t
+
+    cursor.execute("UPDATE users SET title=? WHERE user_id=?", (title, str(uid)))
+    conn.commit()
+    save_json()
+
+
+def add_points(uid, v):
+    p, m = get_user(uid)
+    cursor.execute("UPDATE users SET points=? WHERE user_id=?", (p + v, str(uid)))
+    conn.commit()
+    update_title(uid)
+    save_json()
+
 
 def add_message(uid):
-    data["messages"][str(uid)] = get_messages(uid) + 1
-    save()
+    p, m = get_user(uid)
+    cursor.execute("UPDATE users SET messages=? WHERE user_id=?", (m + 1, str(uid)))
+    conn.commit()
+    save_json()
 
-def get_title(msg):
-    if msg >= 5000:
-        return "👑 ملك الشلة"
-    elif msg >= 1000:
-        return "🔥 أسطورة"
-    elif msg >= 500:
-        return "💎 خبير"
-    elif msg >= 250:
-        return "🥇 محترف"
-    elif msg >= 100:
-        return "🥈 نشط"
-    elif msg >= 50:
-        return "🥉 مبتدئ"
-    return "👶 جديد"
+# ================= USER MENU =================
+def menu(uid):
+    buttons = [
+        [InlineKeyboardButton("⭐ نقاطي", callback_data="points")],
+        [InlineKeyboardButton("📨 رسائلي", callback_data="messages")],
+        [InlineKeyboardButton("❓ سؤال", callback_data="question")]
+    ]
 
-# ================= DELETE JOIN/LEAVE =================
-async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await context.bot.delete_message(
-            update.effective_chat.id,
-            update.message.message_id
-        )
-    except:
-        pass
+    if is_admin(uid):
+        buttons.append([InlineKeyboardButton("⚙️ لوحة الأدمن", callback_data="admin")])
 
-# ================= MAIN HANDLER =================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return InlineKeyboardMarkup(buttons)
 
+# ================= ADMIN MENU =================
+def admin_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ تعديل النقاط", callback_data="edit_points")],
+        [InlineKeyboardButton("📨 تعديل الرسائل", callback_data="edit_messages")],
+        [InlineKeyboardButton("👤 المستخدمين", callback_data="users")],
+        [InlineKeyboardButton("⬅️ رجوع", callback_data="back")]
+    ])
+
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
+    name = update.message.from_user.first_name
+
+    get_user(uid, name)
+
+    await update.message.reply_text(
+        "👋 أهلاً بك",
+        reply_markup=menu(uid)
+    )
+
+# ================= TRACK =================
+async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    user = update.message.from_user
-    uid = user.id
-    text = update.message.text.strip()
-    chat_id = update.effective_chat.id
+    uid = update.message.from_user.id
+    name = update.message.from_user.first_name
 
-    # حفظ الرسائل
-    all_messages.append(update.message.message_id)
-
-    # حفظ المستخدم
-    data["users"][str(uid)] = user.first_name
-    save()
-
-    # زيادة الرسائل
+    get_user(uid, name)
     add_message(uid)
 
-    # ================= معلوماتي =================
-    if text == "نقاطي":
+    text = update.message.text.strip()
 
-        title = get_title(get_messages(uid))
-
-        return await update.message.reply_text(
-            f"⭐ نقاطك: {get_points(uid)}\n"
-            f"📨 رسائلك: {get_messages(uid)}\n"
-            f"🏷️ لقبك: {title}"
-        )
-
-    # ================= سؤال =================
-    if text == "سوال":
-
-        q, a = random.choice(QUESTIONS)
-
-        data["active_question"][str(uid)] = a
-        save()
-
-        return await update.message.reply_text(
-            f"❓ سؤالك:\n{q}"
-        )
-
-    # ================= الإجابة =================
-    if str(uid) in data["active_question"]:
-
-        if text.lower() == data["active_question"][str(uid)].lower():
-
+    if uid in active_q:
+        if text.lower() == active_q[uid].lower():
             add_points(uid, 1)
-
-            del data["active_question"][str(uid)]
-            save()
-
-            return await update.message.reply_text(
-                "🎉 إجابة صحيحة +1 نقطة"
-            )
-
-    # ================= لوحة الإدارة =================
-    if is_admin(uid):
-
-        # ===== فتح لوحة التعديل =====
-        if text == "$تعديل":
-
-            state[uid] = {"step": "search"}
-
-            return await update.message.reply_text(
-                "🔍 اكتب اسم أو ID المستخدم"
-            )
-
-        # ===== البحث =====
-        if uid in state and state[uid]["step"] == "search":
-
-            query = text.lower()
-            results = []
-
-            for u, name in data["users"].items():
-
-                if query in name.lower() or query in u:
-                    results.append((u, name))
-
-            if not results:
-                return await update.message.reply_text(
-                    "❌ لا يوجد نتائج"
-                )
-
-            state[uid]["results"] = results
-            state[uid]["step"] = "select"
-
-            msg = "📋 النتائج:\n\n"
-
-            for i, (u, n) in enumerate(results, 1):
-
-                msg += (
-                    f"{i}) {n}\n"
-                    f"🆔 {u}\n"
-                    f"⭐ {get_points(int(u))}\n"
-                    f"📨 {get_messages(int(u))}\n\n"
-                )
-
-            msg += "✏️ اختر الرقم"
-
-            return await update.message.reply_text(msg)
-
-        # ===== اختيار المستخدم =====
-        if uid in state and state[uid]["step"] == "select":
-
-            try:
-                idx = int(text) - 1
-
-                target = int(
-                    state[uid]["results"][idx][0]
-                )
-
-                state[uid]["target"] = target
-                state[uid]["step"] = "edit"
-
-                return await update.message.reply_text(
-                    "⚙️ اختر:\n\n"
-                    "1) تعديل النقاط\n"
-                    "2) تعديل الرسائل\n"
-                    "3) إضافة نقاط\n"
-                    "4) إضافة رسائل"
-                )
-
-            except:
-                return await update.message.reply_text(
-                    "❌ اختيار غير صحيح"
-                )
-
-        # ===== خيارات التعديل =====
-        if uid in state and state[uid]["step"] == "edit":
-
-            target = state[uid]["target"]
-
-            if text == "1":
-                state[uid]["mode"] = "set_points"
-                return await update.message.reply_text(
-                    "⭐ اكتب النقاط الجديدة"
-                )
-
-            if text == "2":
-                state[uid]["mode"] = "set_messages"
-                return await update.message.reply_text(
-                    "📨 اكتب عدد الرسائل الجديد"
-                )
-
-            if text == "3":
-                state[uid]["mode"] = "add_points"
-                return await update.message.reply_text(
-                    "➕ اكتب عدد النقاط"
-                )
-
-            if text == "4":
-                state[uid]["mode"] = "add_messages"
-                return await update.message.reply_text(
-                    "➕ اكتب عدد الرسائل"
-                )
-
-            # ===== تنفيذ التعديلات =====
-            try:
-                value = int(text)
-
-                # تعديل نقاط
-                if state[uid]["mode"] == "set_points":
-
-                    old = get_points(target)
-
-                    set_points(target, value)
-
-                    await update.message.reply_text(
-                        "✅ تم تعديل النقاط"
-                    )
-
-                    if GROUP_ID:
-                        await context.bot.send_message(
-                            GROUP_ID,
-                            f"🔔 تعديل إداري\n"
-                            f"👤 {target}\n"
-                            f"⭐ {old} → {value}"
-                        )
-
-                # تعديل رسائل
-                elif state[uid]["mode"] == "set_messages":
-
-                    old = get_messages(target)
-
-                    set_messages(target, value)
-
-                    await update.message.reply_text(
-                        "✅ تم تعديل الرسائل"
-                    )
-
-                    if GROUP_ID:
-                        await context.bot.send_message(
-                            GROUP_ID,
-                            f"📨 تعديل الرسائل\n"
-                            f"👤 {target}\n"
-                            f"📊 {old} → {value}"
-                        )
-
-                # إضافة نقاط
-                elif state[uid]["mode"] == "add_points":
-
-                    old = get_points(target)
-
-                    add_points(target, value)
-
-                    await update.message.reply_text(
-                        "➕ تم إضافة النقاط"
-                    )
-
-                    if GROUP_ID:
-                        await context.bot.send_message(
-                            GROUP_ID,
-                            f"⭐ إضافة نقاط\n"
-                            f"👤 {target}\n"
-                            f"⭐ {old} → {get_points(target)}"
-                        )
-
-                # إضافة رسائل
-                elif state[uid]["mode"] == "add_messages":
-
-                    old = get_messages(target)
-
-                    set_messages(
-                        target,
-                        old + value
-                    )
-
-                    await update.message.reply_text(
-                        "➕ تم إضافة الرسائل"
-                    )
-
-                    if GROUP_ID:
-                        await context.bot.send_message(
-                            GROUP_ID,
-                            f"📨 إضافة رسائل\n"
-                            f"👤 {target}\n"
-                            f"📊 {old} → {get_messages(target)}"
-                        )
-
-                del state[uid]
-
-            except:
-                return await update.message.reply_text(
-                    "❌ اكتب رقم صحيح"
-                )
-
-        # ================= تنظيف كامل =================
-        if text == "$تنظيف":
-
-            msg = await update.message.reply_text(
-                "🧹 بدء التنظيف..."
-            )
-
-            for i in range(5, -1, -1):
-
-                await msg.edit_text(
-                    f"🧹 تنظيف خلال {i}..."
-                )
-
-                await asyncio.sleep(1)
-
-            await msg.edit_text(
-                "⚠️ جارِ تنظيف جميع الرسائل..."
-            )
-
-            # حذف الرسائل
-            for mid in reversed(all_messages):
-
-                try:
-                    await context.bot.delete_message(
-                        chat_id,
-                        mid
-                    )
-
-                    await asyncio.sleep(0.03)
-
-                except:
-                    pass
-
-            # حذف رسالة التنظيف
-            try:
-                await context.bot.delete_message(
-                    chat_id,
-                    msg.message_id
-                )
-            except:
-                pass
-
-            # حذف رسالة الأمر
-            try:
-                await context.bot.delete_message(
-                    chat_id,
-                    update.message.message_id
-                )
-            except:
-                pass
-
+            del active_q[uid]
+            await update.message.reply_text("🎉 إجابة صحيحة +1 ⭐")
+
+# ================= BUTTONS =================
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    uid = q.from_user.id
+    data = q.data
+
+    # ===== USER =====
+    if data == "points":
+        p, m = get_user(uid)
+        await q.edit_message_text(f"⭐ نقاطك: {p}", reply_markup=menu(uid))
+
+    elif data == "messages":
+        p, m = get_user(uid)
+        await q.edit_message_text(f"📨 رسائلك: {m}", reply_markup=menu(uid))
+
+    elif data == "question":
+        qst, ans = random.choice(QUESTIONS)
+        active_q[uid] = ans
+        await q.edit_message_text(f"❓ {qst}", reply_markup=menu(uid))
+
+    # ===== ADMIN =====
+    elif data == "admin":
+        if not is_admin(uid):
+            return await q.answer("❌ غير مصرح", show_alert=True)
+
+        await q.edit_message_text("⚙️ لوحة الأدمن", reply_markup=admin_menu())
+
+    elif data == "back":
+        await q.edit_message_text("👋 القائمة", reply_markup=menu(uid))
+
+    elif data == "users":
+        if not is_admin(uid):
             return
+
+        cursor.execute("SELECT user_id, name, points, messages FROM users ORDER BY points DESC")
+        rows = cursor.fetchall()
+
+        msg = "👤 المستخدمين:\n\n"
+        for i, r in enumerate(rows, 1):
+            msg += f"{i}) {r[1]} | {r[0]}\n⭐ {r[2]} | 📨 {r[3]}\n\n"
+
+        await q.edit_message_text(msg, reply_markup=admin_menu())
+
+    elif data == "edit_points":
+        if not is_admin(uid):
+            return
+
+        state[uid] = {"step": "pid"}
+        await q.edit_message_text("🆔 ارسل ID المستخدم")
+
+    elif data == "edit_messages":
+        if not is_admin(uid):
+            return
+
+        state[uid] = {"step": "mid"}
+        await q.edit_message_text("🆔 ارسل ID المستخدم")
+
+# ================= TEXT STEPS =================
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
+    text = update.message.text
+
+    if uid not in state:
+        return
+
+    step = state[uid]["step"]
+
+    # ===== POINTS =====
+    if step == "pid":
+        state[uid]["target"] = text
+        state[uid]["step"] = "pval"
+        await update.message.reply_text("⭐ ارسل النقاط الجديدة")
+
+    elif step == "pval":
+        target = state[uid]["target"]
+
+        cursor.execute("UPDATE users SET points=? WHERE user_id=?", (int(text), target))
+        conn.commit()
+        update_title(target)
+        save_json()
+
+        del state[uid]
+        await update.message.reply_text("✅ تم تعديل النقاط")
+
+    # ===== MESSAGES =====
+    elif step == "mid":
+        state[uid]["target"] = text
+        state[uid]["step"] = "mval"
+        await update.message.reply_text("📨 ارسل الرسائل الجديدة")
+
+    elif step == "mval":
+        target = state[uid]["target"]
+
+        cursor.execute("UPDATE users SET messages=? WHERE user_id=?", (int(text), target))
+        conn.commit()
+        save_json()
+
+        del state[uid]
+        await update.message.reply_text("✅ تم تعديل الرسائل")
 
 # ================= MAIN =================
 def main():
-
-    if not BOT_TOKEN:
-        print("BOT_TOKEN missing")
-        return
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # الرسائل العادية
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle
-        )
-    )
-
-    # حذف الدخول والخروج
-    app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.ALL,
-            delete_service
-        )
-    )
+    app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.add_handler(MessageHandler(filters.COMMAND, start))
 
     print("BOT RUNNING...")
     app.run_polling()
 
-# ================= START =================
 if __name__ == "__main__":
     main()
