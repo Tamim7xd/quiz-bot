@@ -11,7 +11,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 if not TOKEN:
     raise Exception("BOT_TOKEN is missing")
 
-# ================= DB =================
+# ================= DATABASE =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -91,60 +91,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [[InlineKeyboardButton("🛠 لوحة الأدمن", callback_data="panel")]]
         await update.message.reply_text("🔥 أهلاً أدمن", reply_markup=InlineKeyboardMarkup(kb))
     else:
-        await update.message.reply_text("👋 أهلاً بك\nاكتب: معلوماتي - سؤال")
-
-# ================= CALLBACK =================
-async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    uid = q.from_user.id
-
-    if uid != ADMIN_ID:
-        return
-
-    # ===== PANEL =====
-    if q.data == "panel":
-        kb = [
-            [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
-            [InlineKeyboardButton("➕ نقاط", callback_data="points_mode")],
-            [InlineKeyboardButton("🏅 ألقاب", callback_data="title_mode")]
-        ]
-        await q.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
-
-    # ===== USERS =====
-    elif q.data == "users":
-        c.execute("SELECT user_id,name,points FROM users")
-        users = c.fetchall()
-
-        for u in users:
-            kb = [[InlineKeyboardButton(
-                f"{u[1]} | {u[2]}",
-                callback_data=f"user_{u[0]}"
-            )]]
-            await q.message.reply_text("👤 عضو:", reply_markup=InlineKeyboardMarkup(kb))
-
-    # ===== SELECT USER =====
-    elif q.data.startswith("user_"):
-        target = int(q.data.split("_")[1])
-
-        kb = [
-            [InlineKeyboardButton("➕ إعطاء نقاط", callback_data=f"set_points_{target}")],
-            [InlineKeyboardButton("🏅 إعطاء لقب", callback_data=f"set_title_{target}")]
-        ]
-        await q.message.reply_text("⚙️ اختر:", reply_markup=InlineKeyboardMarkup(kb))
-
-    # ===== SET POINTS =====
-    elif q.data.startswith("set_points_"):
-        target = int(q.data.split("_")[2])
-        admin_state[uid] = ("points", target)
-        await q.message.reply_text("✏️ اكتب عدد النقاط:")
-
-    # ===== SET TITLE =====
-    elif q.data.startswith("set_title_"):
-        target = int(q.data.split("_")[2])
-        admin_state[uid] = ("title", target)
-        await q.message.reply_text("🏅 اكتب اللقب:")
+        await update.message.reply_text("👋 أهلاً بك\nاكتب: معلوماتي / سؤال")
 
 # ================= MAIN HANDLER =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,29 +134,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_state.pop(uid)
             return
 
-    # ================= SAVE USER =================
-    c.execute("INSERT OR IGNORE INTO users VALUES (?,?,0,0,'مبتدئ')", (uid,name))
-    conn.commit()
-
-    # ================= ANSWER SYSTEM =================
-    c.execute("SELECT q,a FROM active_q WHERE user_id=?", (uid,))
-    active = c.fetchone()
-
-    if active:
-        correct = active[1]
-
-        if text.lower() == correct.lower():
-            await update.message.reply_text("✅ صحيح +5")
-            points += 5
-        else:
-            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
-
-        c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
-        conn.commit()
-
-        save_user(uid,name,points,messages,title)
-        return
-
     # ================= INFO =================
     if text == "معلوماتي":
         await update.message.reply_text(
@@ -228,6 +152,25 @@ f"""👤 معلوماتك:
         conn.commit()
 
         await update.message.reply_text(f"❓ {q[0]}")
+        return
+
+    # ================= ANSWER CHECK =================
+    c.execute("SELECT q,a FROM active_q WHERE user_id=?", (uid,))
+    active = c.fetchone()
+
+    if active:
+        correct = active[1]
+
+        if text.lower() == correct.lower():
+            await update.message.reply_text("✅ صحيح +5")
+            points += 5
+        else:
+            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
+
+        c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
+        conn.commit()
+
+        save_user(uid,name,points,messages,title)
         return
 
     # ================= NORMAL MESSAGE =================
@@ -249,6 +192,61 @@ f"""🎉 ترقية!
 🔢 {points}"""
         )
 
+# ================= CALLBACK (ADMIN PANEL) =================
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    q = update.callback_query
+    await q.answer()
+
+    uid = q.from_user.id
+
+    if uid != ADMIN_ID:
+        return
+
+    # ===== PANEL =====
+    if q.data == "panel":
+        kb = [
+            [InlineKeyboardButton("👥 عرض الأعضاء", callback_data="users")],
+            [InlineKeyboardButton("➕ نقاط", callback_data="points_mode")],
+            [InlineKeyboardButton("🏅 ألقاب", callback_data="title_mode")]
+        ]
+        await q.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
+
+    # ===== USERS =====
+    elif q.data == "users":
+        c.execute("SELECT user_id,name,points FROM users")
+        users = c.fetchall()
+
+        for u in users:
+            kb = [[InlineKeyboardButton(
+                f"{u[1]} | {u[2]}",
+                callback_data=f"user_{u[0]}"
+            )]]
+            await q.message.reply_text("👤 عضو:", reply_markup=InlineKeyboardMarkup(kb))
+
+    # ===== SELECT USER =====
+    elif q.data.startswith("user_"):
+        target = int(q.data.split("_")[1])
+
+        kb = [
+            [InlineKeyboardButton("➕ نقاط", callback_data=f"setp_{target}")],
+            [InlineKeyboardButton("🏅 لقب", callback_data=f"sett_{target}")]
+        ]
+
+        await q.message.reply_text("⚙️ اختر العملية:", reply_markup=InlineKeyboardMarkup(kb))
+
+    # ===== SET POINTS =====
+    elif q.data.startswith("setp_"):
+        target = int(q.data.split("_")[1])
+        admin_state[uid] = ("points", target)
+        await q.message.reply_text("✏️ اكتب عدد النقاط:")
+
+    # ===== SET TITLE =====
+    elif q.data.startswith("sett_"):
+        target = int(q.data.split("_")[1])
+        admin_state[uid] = ("title", target)
+        await q.message.reply_text("🏅 اكتب اللقب:")
+
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
 
@@ -256,5 +254,5 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(callback))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("ULTRA BOT RUNNING...")
+print("ULTRA CLEAN BOT RUNNING...")
 app.run_polling()
