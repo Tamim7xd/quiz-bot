@@ -229,9 +229,7 @@ async def admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text
 
-    if uid not in admin_state:
-        return
-
+if uid in admin_state:
     action, target = admin_state[uid]
 
     if action == "points":
@@ -241,12 +239,12 @@ async def admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ اكتب رقم فقط")
             return
 
-        c.execute("SELECT points,name FROM users WHERE user_id=?", (target,))
+        c.execute("SELECT points FROM users WHERE user_id=?", (target,))
         row = c.fetchone()
 
         if row:
             new_points = row[0] + add
-            c.execute("UPDATE users SET points=? WHERE user_id=?", (new_points,target))
+            c.execute("UPDATE users SET points=? WHERE user_id=?", (new_points, target))
             conn.commit()
 
         await update.message.reply_text("✅ تم إعطاء النقاط")
@@ -254,7 +252,7 @@ async def admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "title":
-        c.execute("UPDATE users SET title=? WHERE user_id=?", (text,target))
+        c.execute("UPDATE users SET title=? WHERE user_id=?", (text, target))
         conn.commit()
 
         await update.message.reply_text("🏅 تم إعطاء اللقب")
@@ -267,7 +265,7 @@ app = Application.builder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 app.add_handler(CallbackQueryHandler(callback))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_input))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 print("BOT RUNNING ULTRA FIXED...")
 app.run_polling()
