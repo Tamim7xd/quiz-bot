@@ -1,13 +1,18 @@
 import os
 import sqlite3
-import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
 
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
+
+# إذا تريد تجربة بدون مشاكل خليها False
+ALLOW_GROUP_LOCK = False
 
 # ================= DATABASE =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
@@ -59,21 +64,43 @@ def get_user(uid):
     if not row:
         c.execute("INSERT INTO users (user_id) VALUES (?)", (uid,))
         conn.commit()
-        return 0,0,"مبتدئ"
+        return 0, 0, "مبتدئ"
     return row
 
 def save_user(uid, p, m, t):
     c.execute("UPDATE users SET points=?,messages=?,title=? WHERE user_id=?",
-              (p,m,t,uid))
+              (p, m, t, uid))
     conn.commit()
 
 def get_title(points):
-    return TITLES[min(points // 50, len(TITLES)-1)]
+    return TITLES[min(points // 50, len(TITLES) - 1)]
 
-# ================= MESSAGE HANDLER =================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id != GROUP_ID:
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+
+    if uid != ADMIN_ID:
+        await update.message.reply_text("👋 أهلاً بك في البوت")
         return
+
+    keyboard = [
+        [InlineKeyboardButton("🛠 لوحة التحكم", callback_data="panel")],
+        [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
+        [InlineKeyboardButton("🔍 بحث عضو", callback_data="search")],
+        [InlineKeyboardButton("➕ إضافة سؤال", callback_data="add_q")]
+    ]
+
+    await update.message.reply_text(
+        "🔥 لوحة تحكم الأدمن",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ================= MESSAGE =================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if ALLOW_GROUP_LOCK:
+        if update.effective_chat.id != GROUP_ID:
+            return
 
     user = update.effective_user
     uid = user.id
@@ -81,7 +108,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     points, messages, title = get_user(uid)
 
-    # ===== ADMIN STATES =====
+    # -------- ADMIN STATES --------
     if uid in admin_state:
 
         state = admin_state[uid]
@@ -91,7 +118,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target = int(state.split("_")[2])
             amount = int(text)
 
-            p,m,t = get_user(target)
+            p, m, t = get_user(target)
             p += amount
             save_user(target, p, m, t)
 
@@ -115,12 +142,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_state.pop(uid)
             return
 
-        # search user
+        # search
         if state == "search":
             c.execute("SELECT user_id FROM users")
             users = c.fetchall()
 
             found = []
+
             for u in users:
                 try:
                     chat = await context.bot.get_chat(u[0])
@@ -131,16 +159,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
 
             if not found:
-                await update.message.reply_text("لا يوجد نتائج")
+                await update.message.reply_text("❌ لا يوجد نتائج")
             else:
                 for f in found:
                     kb = [[InlineKeyboardButton(f[1], callback_data=f"user_{f[0]}")]]
-                    await update.message.reply_text("نتيجة:", reply_markup=InlineKeyboardMarkup(kb))
+                    await update.message.reply_text("👤 نتيجة:", reply_markup=InlineKeyboardMarkup(kb))
 
             admin_state.pop(uid)
             return
 
-    # ===== ANSWER SYSTEM =====
+    # -------- ANSWER SYSTEM --------
     c.execute("SELECT q,a FROM active_q WHERE user_id=?", (uid,))
     active = c.fetchone()
 
@@ -151,7 +179,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ الجواب صحيح")
             points += 5
         else:
-            await update.message.reply_text(f"❌ الجواب خاطئ\nالإجابة: {correct}")
+            await update.message.reply_text(f"❌ الجواب خاطئ\nالإجابة الصحيحة: {correct}")
 
         c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
         conn.commit()
@@ -159,7 +187,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_user(uid, points, messages, get_title(points))
         return
 
-    # ===== COMMANDS =====
+    # -------- COMMANDS --------
     if text == "معلوماتي":
         await update.message.reply_text(
             f"""👤 معلوماتك: @{user.username or user.first_name}
@@ -175,14 +203,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         q = c.fetchone()
 
         if q:
-            c.execute("REPLACE INTO active_q VALUES (?,?,?)",(uid,q[0],q[1]))
+            c.execute("REPLACE INTO active_q VALUES (?,?,?)", (uid, q[0], q[1]))
             conn.commit()
             await update.message.reply_text(f"❓ {q[0]}")
         else:
-            await update.message.reply_text("لا توجد أسئلة")
+            await update.message.reply_text("❌ لا توجد أسئلة")
         return
 
-    # ===== NORMAL MESSAGE =====
+    # -------- NORMAL MESSAGE --------
     old_title = title
 
     points += 1
@@ -192,7 +220,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_user(uid, points, messages, new_title)
 
-    # 🔔 global rank up
+    # 🔔 rank up
     if new_title != old_title:
         await update.message.reply_text(
             f"""🎉 إشعار ترقية!
@@ -202,31 +230,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔢 نقاط: {points}"""
         )
 
-# ================= ADMIN PANEL =================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    kb = [
-        [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
-        [InlineKeyboardButton("🔍 بحث", callback_data="search")],
-        [InlineKeyboardButton("➕ إضافة سؤال", callback_data="add_q")]
-    ]
-
-    await update.message.reply_text(
-        "🛠 لوحة الأدمن",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
 # ================= CALLBACK =================
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     q = update.callback_query
     await q.answer()
 
     uid = q.from_user.id
 
-    # list users
-    if q.data == "users":
+    # panel
+    if q.data == "panel":
+        if uid != ADMIN_ID:
+            return
+
+        kb = [
+            [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
+            [InlineKeyboardButton("🔍 بحث", callback_data="search")],
+            [InlineKeyboardButton("➕ سؤال", callback_data="add_q")]
+        ]
+
+        await q.message.reply_text("🛠 لوحة التحكم", reply_markup=InlineKeyboardMarkup(kb))
+
+    # users
+    elif q.data == "users":
         c.execute("SELECT user_id FROM users")
         users = c.fetchall()
 
@@ -248,7 +274,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("➕ نقاط", callback_data=f"add_{target}")]
         ]
 
-        await q.message.reply_text("اختر:", reply_markup=InlineKeyboardMarkup(kb))
+        await q.message.reply_text("⚙️ اختر:", reply_markup=InlineKeyboardMarkup(kb))
 
     # add points
     elif q.data.startswith("add_"):
@@ -269,7 +295,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("admin", admin))
+app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.add_handler(CallbackQueryHandler(callback))
 
