@@ -34,8 +34,50 @@ conn.commit()
 state = {}
 active_q = {}
 
+# ================= TITLES =================
+def update_title(uid):
+    cursor.execute("SELECT points FROM users WHERE user_id=?", (str(uid),))
+    row = cursor.fetchone()
+    if not row:
+        return
+
+    points = row[0]
+
+    cursor.execute("""
+        SELECT title FROM users
+        WHERE user_id=?
+    """, (str(uid),))
+    old = cursor.fetchone()
+
+    # توليد لقب تلقائي بسيط حسب النقاط
+    if points >= 5000:
+        title = "👑 أسطورة"
+    elif points >= 2000:
+        title = "🔥 خبير"
+    elif points >= 1000:
+        title = "🥇 محترف"
+    elif points >= 500:
+        title = "🥈 نشط"
+    else:
+        title = "👶 مبتدئ"
+
+    cursor.execute("UPDATE users SET title=? WHERE user_id=?", (title, str(uid)))
+    conn.commit()
+
 # ================= QUESTIONS =================
-QUESTIONS = [(f"كم {i}+{i+2}؟", str(i + i + 2)) for i in range(1, 120)]
+QUESTIONS = []
+for i in range(80):
+    a = random.randint(1, 50)
+    b = random.randint(1, 50)
+    QUESTIONS.append((f"كم {a}+{b}؟", str(a+b)))
+
+QUESTIONS += [
+    ("ما عاصمة العراق؟", "بغداد"),
+    ("ما عاصمة فرنسا؟", "باريس"),
+    ("ما عدد الكواكب؟", "8"),
+    ("ما أكبر كوكب؟", "المشتري"),
+    ("ما أعلى جبل؟", "إيفرست"),
+]
 
 # ================= HELPERS =================
 def is_admin(uid):
@@ -43,7 +85,7 @@ def is_admin(uid):
 
 
 def get_user(uid, name=""):
-    cursor.execute("SELECT points,messages,title,name FROM users WHERE user_id=?", (str(uid),))
+    cursor.execute("SELECT points,messages,title FROM users WHERE user_id=?", (str(uid),))
     row = cursor.fetchone()
 
     if not row:
@@ -52,7 +94,7 @@ def get_user(uid, name=""):
             (str(uid), name, 0, 0, "👶 مبتدئ")
         )
         conn.commit()
-        return (0, 0, "👶 مبتدئ", name)
+        return (0, 0, "👶 مبتدئ")
 
     return row
 
@@ -61,19 +103,19 @@ def set_user(uid, field, value):
     cursor.execute(f"UPDATE users SET {field}=? WHERE user_id=?", (value, str(uid)))
     conn.commit()
 
-# ================= UI =================
+# ================= MENU =================
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 المستخدمين", callback_data="users")],
-        [InlineKeyboardButton("👤 العضو + ID", callback_data="ids")],
+        [InlineKeyboardButton("👤 العضو + ID", callback_data="ids")]
     ])
 
 
 def user_panel(uid):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ النقاط", callback_data=f"set_points:{uid}")],
-        [InlineKeyboardButton("📨 الرسائل", callback_data=f"set_msgs:{uid}")],
-        [InlineKeyboardButton("🏷️ اللقب", callback_data=f"set_title:{uid}")],
+        [InlineKeyboardButton("⭐ نقاط", callback_data=f"p:{uid}")],
+        [InlineKeyboardButton("📨 رسائل", callback_data=f"m:{uid}")],
+        [InlineKeyboardButton("🏷️ لقب", callback_data=f"t:{uid}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="users")]
     ])
 
@@ -85,9 +127,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(uid):
         await update.message.reply_text("👑 لوحة التحكم", reply_markup=admin_menu())
     else:
-        await update.message.reply_text("👋 اكتب: سوال / معلوماتي")
+        await update.message.reply_text("👋 اكتب: سوال / معلوماتي / top")
 
-# ================= NORMAL =================
+# ================= MAIN =================
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text.strip()
@@ -103,15 +145,28 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # معلوماتي
     if text == "معلوماتي":
-        p, m, t, n = get_user(uid)
-        await update.message.reply_text(f"👤 {n}\n⭐ {p}\n📨 {m}\n🏷️ {t}")
+        p, m, t = get_user(uid)
+        await update.message.reply_text(f"⭐ {p}\n📨 {m}\n🏷️ {t}")
+        return
+
+    # top
+    if text == "top":
+        cursor.execute("SELECT name,points FROM users ORDER BY points DESC LIMIT 10")
+        rows = cursor.fetchall()
+
+        msg = "🏆 TOP 10\n\n"
+        for i, r in enumerate(rows, 1):
+            msg += f"{i}) {r[0]} ⭐ {r[1]}\n"
+
+        await update.message.reply_text(msg)
         return
 
     # إجابة
     if uid in active_q:
         if text.lower() == active_q[uid].lower():
-            p, m, t, n = get_user(uid)
+            p, m, t = get_user(uid)
             set_user(uid, "points", p + 1)
+            update_title(uid)
             del active_q[uid]
             await update.message.reply_text("✔️ صحيح +1")
 
@@ -138,12 +193,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await q.edit_message_text("👤 المستخدمين:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ===== IDS LIST =====
+    # ===== IDS =====
     elif data == "ids":
         cursor.execute("SELECT user_id,name FROM users")
         rows = cursor.fetchall()
 
-        text = "👤 الأعضاء:\n\n"
+        text = "👤 الأعضاء + ID:\n\n"
         for r in rows:
             text += f"{r[1]}\n🆔 {r[0]}\n\n"
 
@@ -153,27 +208,27 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("user:"):
         target = data.split(":")[1]
         state[uid] = {"target": target}
-        await q.edit_message_text("⚙️ اختر:", reply_markup=user_panel(target))
+        await q.edit_message_text("⚙️ إدارة المستخدم", reply_markup=user_panel(target))
 
-    # ===== SET POINTS =====
-    elif data.startswith("set_points:"):
+    # ===== POINTS =====
+    elif data.startswith("p:"):
         target = data.split(":")[1]
         state[uid] = {"target": target, "mode": "points"}
-        await q.edit_message_text("⭐ ارسل النقاط الجديدة")
+        await q.edit_message_text("⭐ ارسل النقاط")
 
-    # ===== SET MESSAGES =====
-    elif data.startswith("set_msgs:"):
+    # ===== MESSAGES =====
+    elif data.startswith("m:"):
         target = data.split(":")[1]
-        state[uid] = {"target": target, "mode": "msgs"}
-        await q.edit_message_text("📨 ارسل الرسائل الجديدة")
+        state[uid] = {"target": target, "mode": "messages"}
+        await q.edit_message_text("📨 ارسل الرسائل")
 
-    # ===== SET TITLE =====
-    elif data.startswith("set_title:"):
+    # ===== TITLE =====
+    elif data.startswith("t:"):
         target = data.split(":")[1]
         state[uid] = {"target": target, "mode": "title"}
-        await q.edit_message_text("🏷️ ارسل اللقب الجديد")
+        await q.edit_message_text("🏷️ ارسل اللقب")
 
-# ================= TEXT HANDLER (FIXED 100%) =================
+# ================= TEXT FIXED =================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text.strip()
@@ -187,9 +242,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if s["mode"] == "points":
             set_user(target, "points", int(text))
+            update_title(target)
             await update.message.reply_text("✔️ تم تعديل النقاط")
 
-        elif s["mode"] == "msgs":
+        elif s["mode"] == "messages":
             set_user(target, "messages", int(text))
             await update.message.reply_text("✔️ تم تعديل الرسائل")
 
@@ -197,12 +253,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_user(target, "title", text)
             await update.message.reply_text("✔️ تم تعديل اللقب")
 
-    except Exception as e:
+    except:
         await update.message.reply_text("❌ خطأ في الإدخال")
 
     del state[uid]
 
-# ================= MAIN =================
+# ================= MAIN RUN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
