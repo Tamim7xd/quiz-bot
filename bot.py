@@ -77,15 +77,11 @@ def get_title(points):
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-
-    if uid == ADMIN_ID:
-        kb = [
-            [InlineKeyboardButton("🛠 لوحة الأدمن", callback_data="panel")]
-        ]
+    if update.effective_user.id == ADMIN_ID:
+        kb = [[InlineKeyboardButton("🛠 لوحة الأدمن", callback_data="panel")]]
         await update.message.reply_text("🔥 أهلاً أدمن", reply_markup=InlineKeyboardMarkup(kb))
     else:
-        await update.message.reply_text("👋 أهلاً بك\nاكتب: معلوماتي / سؤال")
+        await update.message.reply_text("👋 أهلاً بك")
 
 # ================= MAIN =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,36 +93,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     points, messages, title = get_user(uid, name)
 
-    # ===== ADMIN INPUT STATE =====
-    if uid in admin_state:
-        action, target = admin_state[uid]
-
-        if action == "points":
-            try:
-                add = int(text)
-            except:
-                await update.message.reply_text("❌ اكتب رقم فقط")
-                return
-
-            c.execute("SELECT points FROM users WHERE user_id=?", (target,))
-            row = c.fetchone()
-
-            if row:
-                new_points = row[0] + add
-                c.execute("UPDATE users SET points=? WHERE user_id=?", (new_points,target))
-                conn.commit()
-
-            await update.message.reply_text("✅ تم إضافة النقاط")
-            admin_state.pop(uid)
-            return
-
-        if action == "title":
-            c.execute("UPDATE users SET title=? WHERE user_id=?", (text,target))
-            conn.commit()
-
-            await update.message.reply_text("🏅 تم إعطاء اللقب")
-            admin_state.pop(uid)
-            return
+    # 💾 تسجيل كل مستخدم (مهم جداً لظهورهم في لوحة الأدمن)
+    if uid != ADMIN_ID:
+        c.execute("INSERT OR IGNORE INTO users VALUES (?,?,0,0,'مبتدئ')", (uid,name))
+        conn.commit()
 
     # ===== ANSWER SYSTEM =====
     c.execute("SELECT q,a FROM active_q WHERE user_id=?", (uid,))
@@ -186,7 +156,7 @@ f"""🎉 ترقية!
 🔢 {points}"""
         )
 
-# ================= CALLBACK (FIXED ADMIN PANEL) =================
+# ================= ADMIN PANEL =================
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
@@ -200,14 +170,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         kb = [
-            [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
+            [InlineKeyboardButton("👥 عرض الأعضاء", callback_data="users")],
             [InlineKeyboardButton("➕ نقاط", callback_data="add_points")],
-            [InlineKeyboardButton("🏅 ألقاب", callback_data="set_title")]
+            [InlineKeyboardButton("🏅 ألقاب", callback_data="add_title")]
         ]
 
         await q.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
 
-    # ===== USERS LIST =====
+    # ===== SHOW USERS (FIXED) =====
     elif q.data == "users":
         if uid != ADMIN_ID:
             return
@@ -215,9 +185,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT user_id,name,points FROM users")
         users = c.fetchall()
 
+        if not users:
+            await q.message.reply_text("❌ لا يوجد أعضاء")
+            return
+
         for u in users:
             kb = [[InlineKeyboardButton(
-                f"{u[1]} | {u[2]}",
+                f"{u[1]} | {u[2]} نقطة",
                 callback_data=f"user_{u[0]}"
             )]]
 
@@ -231,23 +205,61 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = int(q.data.split("_")[1])
 
         kb = [
-            [InlineKeyboardButton("➕ نقاط", callback_data=f"p_{target}")],
-            [InlineKeyboardButton("🏅 لقب", callback_data=f"t_{target}")]
+            [InlineKeyboardButton("➕ إعطاء نقاط", callback_data=f"points_{target}")],
+            [InlineKeyboardButton("🏅 إعطاء لقب", callback_data=f"title_{target}")]
         ]
 
-        await q.message.reply_text("⚙️ اختر:", reply_markup=InlineKeyboardMarkup(kb))
+        await q.message.reply_text("⚙️ اختر العملية:", reply_markup=InlineKeyboardMarkup(kb))
 
-    # ===== ADD POINTS =====
-    elif q.data.startswith("p_"):
+    # ===== POINTS INPUT =====
+    elif q.data.startswith("points_"):
         target = int(q.data.split("_")[1])
         admin_state[uid] = ("points", target)
         await q.message.reply_text("✏️ اكتب عدد النقاط:")
 
-    # ===== ADD TITLE =====
-    elif q.data.startswith("t_"):
+    # ===== TITLE INPUT =====
+    elif q.data.startswith("title_"):
         target = int(q.data.split("_")[1])
         admin_state[uid] = ("title", target)
         await q.message.reply_text("🏅 اكتب اللقب:")
+
+# ================= ADMIN TEXT INPUT =================
+async def admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    uid = update.effective_user.id
+    text = update.message.text
+
+    if uid not in admin_state:
+        return
+
+    action, target = admin_state[uid]
+
+    if action == "points":
+        try:
+            add = int(text)
+        except:
+            await update.message.reply_text("❌ اكتب رقم فقط")
+            return
+
+        c.execute("SELECT points,name FROM users WHERE user_id=?", (target,))
+        row = c.fetchone()
+
+        if row:
+            new_points = row[0] + add
+            c.execute("UPDATE users SET points=? WHERE user_id=?", (new_points,target))
+            conn.commit()
+
+        await update.message.reply_text("✅ تم إعطاء النقاط")
+        admin_state.pop(uid)
+        return
+
+    if action == "title":
+        c.execute("UPDATE users SET title=? WHERE user_id=?", (text,target))
+        conn.commit()
+
+        await update.message.reply_text("🏅 تم إعطاء اللقب")
+        admin_state.pop(uid)
+        return
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
@@ -255,6 +267,7 @@ app = Application.builder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 app.add_handler(CallbackQueryHandler(callback))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_input))
 
-print("ULTRA PRO FIXED RUNNING...")
+print("BOT RUNNING ULTRA FIXED...")
 app.run_polling()
