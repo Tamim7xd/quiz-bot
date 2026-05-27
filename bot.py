@@ -1,6 +1,6 @@
 import os
+import json
 import random
-from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
@@ -9,37 +9,50 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = os.getenv("GROUP_ID")
 
-# ================= DATA =================
-points = defaultdict(int)
-messages = defaultdict(int)
+DATA_FILE = "data.json"
 
-active_question = {
-    "chat": None,
-    "answer": None
-}
+# ================= LOAD / SAVE =================
+def load_data():
+    try:
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {"points": {}, "messages": {}, "active_question": {}}
 
-questions = [
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
+data = load_data()
+
+# تحويل dict
+def get_points(uid):
+    return data["points"].get(str(uid), 0)
+
+def set_points(uid, value):
+    data["points"][str(uid)] = value
+    save_data(data)
+
+def add_points(uid, value):
+    data["points"][str(uid)] = get_points(uid) + value
+    save_data(data)
+
+def get_messages(uid):
+    return data["messages"].get(str(uid), 0)
+
+def add_message(uid):
+    data["messages"][str(uid)] = get_messages(uid) + 1
+    save_data(data)
+
+# ================= QUESTIONS =================
+QUESTIONS = [
     ("ما عاصمة العراق؟", "بغداد"),
+    ("ما أكبر دولة؟", "روسيا"),
     ("كم عدد الكواكب؟", "8"),
-    ("ما أكبر قارة؟", "آسيا"),
-    ("كم عدد أيام الأسبوع؟", "7"),
+    ("ما أطول نهر؟", "النيل"),
 ]
 
-# ================= TITLE SYSTEM =================
-def title(count):
-    if count >= 1000:
-        return "🔥 أسطورة"
-    elif count >= 500:
-        return "💎 خبير"
-    elif count >= 250:
-        return "🥇 محترف"
-    elif count >= 100:
-        return "🥈 نشط"
-    elif count >= 50:
-        return "🥉 مبتدئ"
-    return "👶 جديد"
-
-# ================= ADMIN CHECK =================
+# ================= ADMIN =================
 def is_admin(uid):
     return uid == ADMIN_ID
 
@@ -53,64 +66,55 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = user.id
     text = update.message.text.strip()
     chat_id = update.effective_chat.id
-    chat_type = update.effective_chat.type
 
-    messages[uid] += 1
+    add_message(uid)
 
-    # ===== USER =====
-    if text == "نقاطي":
-        await update.message.reply_text(
-            f"⭐ نقاطك: {points[uid]}\n"
-            f"📊 رسائل: {messages[uid]}\n"
-            f"🏷️ لقب: {title(messages[uid])}"
-        )
-        return
+    # ================= QUESTION =================
+    if text == "سؤال":
+        q, a = random.choice(QUESTIONS)
 
-    # ===== GROUP QUESTION =====
-    if text == "سوال":
+        data["active_question"] = {
+            "user": str(uid),
+            "answer": a
+        }
+        save_data(data)
 
-        if chat_type == "private":
-            await update.message.reply_text("❌ استخدمه داخل المجموعة")
-            return
+        return await update.message.reply_text(f"❓ {q}")
 
-        q, a = random.choice(questions)
+    # ================= ANSWER =================
+    aq = data.get("active_question", {})
 
-        active_question["chat"] = chat_id
-        active_question["answer"] = a
+    if aq.get("user") == str(uid):
 
-        await update.message.reply_text(f"❓ سؤال جماعي:\n{q}")
-        return
+        if text.lower() == aq.get("answer", "").lower():
 
-    # ===== ANSWER SYSTEM =====
-    if active_question["chat"] == chat_id and active_question["answer"]:
+            add_points(uid, 1)
 
-        if text.lower() == active_question["answer"].lower():
+            data["active_question"] = {}
+            save_data(data)
 
-            points[uid] += 1
-
-            active_question["chat"] = None
-            active_question["answer"] = None
-
-            await update.message.reply_text(
-                f"🎉 صحيح!\n🏆 +1 نقطة"
-            )
-            return
+            return await update.message.reply_text("🎉 صحيح +1 نقطة")
 
         else:
-            return
+            return await update.message.reply_text("❌ خطأ")
 
-    # ===== ADMIN ONLY =====
+    # ================= USER INFO =================
+    if text == "نقاطي":
+        return await update.message.reply_text(
+            f"⭐ نقاطك: {get_points(uid)}\n📊 رسائل: {get_messages(uid)}"
+        )
+
+    # ================= ADMIN =================
     if is_admin(uid):
 
-        # تعديل نقاط
         if text.startswith("تعديل"):
             try:
                 _, target, value = text.split()
                 target = int(target)
                 value = int(value)
 
-                old = points[target]
-                points[target] = value
+                old = get_points(target)
+                set_points(target, value)
 
                 await update.message.reply_text("✅ تم التعديل")
 
@@ -127,15 +131,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ استخدم: تعديل ID رقم")
             return
 
-        # إضافة نقاط
         if text.startswith("إضافة"):
             try:
                 _, target, value = text.split()
                 target = int(target)
                 value = int(value)
 
-                old = points[target]
-                points[target] += value
+                old = get_points(target)
+                add_points(target, value)
 
                 await update.message.reply_text("➕ تم الإضافة")
 
@@ -145,13 +148,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f"➕ إضافة نقاط:\n"
                         f"👤 ID: {target}\n"
                         f"⭐ قبل: {old}\n"
-                        f"⭐ بعد: {points[target]}"
+                        f"⭐ بعد: {get_points(target)}"
                     )
 
             except:
                 await update.message.reply_text("❌ استخدم: إضافة ID رقم")
             return
-
 
 # ================= MAIN =================
 def main():
@@ -160,10 +162,9 @@ def main():
         return
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("Bot is running...")
+    print("Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
