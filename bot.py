@@ -8,6 +8,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
     MessageHandler,
+    CommandHandler,
     ContextTypes,
     filters,
 )
@@ -54,7 +55,7 @@ def save_json():
     with open("backup.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ================= 25 TITLES =================
+# ================= TITLES (25) =================
 def init_titles():
     if cursor.execute("SELECT COUNT(*) FROM titles").fetchone()[0] == 0:
         base = [
@@ -89,16 +90,14 @@ def init_titles():
 
 init_titles()
 
-# ================= +150 QUESTIONS =================
+# ================= QUESTIONS (150+) =================
 QUESTIONS = []
 
-# 120 رياضيات
 for i in range(120):
     a = random.randint(1, 50)
     b = random.randint(1, 50)
     QUESTIONS.append((f"كم {a} + {b}؟", str(a + b)))
 
-# 30 عامة
 general = [
     ("ما عاصمة العراق؟", "بغداد"),
     ("ما عاصمة فرنسا؟", "باريس"),
@@ -106,30 +105,20 @@ general = [
     ("ما عاصمة السعودية؟", "الرياض"),
     ("ما عاصمة أمريكا؟", "واشنطن"),
     ("ما أكبر كوكب؟", "المشتري"),
+    ("ما عدد الكواكب؟", "8"),
+    ("ما لون السماء؟", "أزرق"),
+    ("ما الغاز الذي نتنفسه؟", "الأوكسجين"),
+    ("ما أطول نهر؟", "النيل"),
+    ("ما أكبر دولة؟", "روسيا"),
     ("ما أصغر قارة؟", "أستراليا"),
     ("كم عدد القارات؟", "7"),
     ("كم عدد أيام الأسبوع؟", "7"),
-    ("ما لون السماء؟", "أزرق"),
-    ("ما الغاز الذي نتنفسه؟", "الأوكسجين"),
-    ("ما رمز الماء؟", "H2O"),
-    ("ما أطول نهر؟", "النيل"),
-    ("ما أكبر دولة؟", "روسيا"),
-    ("ما الحيوان الأسرع؟", "الفهد"),
-    ("ما هو الإنترنت؟", "شبكة"),
-    ("ما عاصمة تركيا؟", "أنقرة"),
+    ("ما أعلى جبل؟", "إيفرست"),
     ("ما عملة العراق؟", "الدينار"),
+    ("ما الحيوان الأسرع؟", "الفهد"),
     ("ما أقرب كوكب للشمس؟", "عطارد"),
     ("ما أكبر محيط؟", "الهادئ"),
-    ("كم عدد العيون؟", "2"),
-    ("ما مصدر الضوء؟", "الشمس"),
-    ("ما الحيوان الصحراوي؟", "الجمل"),
-    ("ما أعلى جبل؟", "إيفرست"),
     ("ما لون الدم؟", "أحمر"),
-    ("ما الكوكب الأزرق؟", "الأرض"),
-    ("ما عدد الكواكب؟", "8"),
-    ("ما اللغة في العراق؟", "العربية"),
-    ("ما أكبر قارة؟", "آسيا"),
-    ("ما أصغر دولة؟", "الفاتيكان"),
 ]
 
 QUESTIONS.extend(general)
@@ -174,9 +163,11 @@ def update_title(uid):
         LIMIT 1
     """, (points,))
 
-    title = cursor.fetchone()[0]
+    t = cursor.fetchone()
+    if not t:
+        return
 
-    cursor.execute("UPDATE users SET title=? WHERE user_id=?", (title, str(uid)))
+    cursor.execute("UPDATE users SET title=? WHERE user_id=?", (t[0], str(uid)))
     conn.commit()
     save_json()
 
@@ -203,9 +194,20 @@ def add_message(uid):
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 المستخدمين", callback_data="users")],
-        [InlineKeyboardButton("💰 نقاط جماعية", callback_data="global_points")],
-        [InlineKeyboardButton("🏷️ الألقاب", callback_data="titles")]
+        [InlineKeyboardButton("💰 نقاط جماعية", callback_data="global_points")]
     ])
+
+# ================= /START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    name = update.effective_user.first_name
+
+    get_user(uid, name)
+
+    if is_admin(uid):
+        await update.message.reply_text("👑 لوحة الأدمن", reply_markup=admin_menu())
+    else:
+        await update.message.reply_text("👋 اكتب: سوال أو معلوماتي")
 
 # ================= TRACK =================
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,20 +223,20 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== سوال =====
     if text in ["سوال", "سؤال"]:
-        qst, ans = random.choice(QUESTIONS)
-        active_q[uid] = ans
-        await update.message.reply_text(f"❓ {qst}")
+        q, a = random.choice(QUESTIONS)
+        active_q[uid] = a
+        await update.message.reply_text(f"❓ {q}")
         return
 
     # ===== معلوماتي =====
     if text == "معلوماتي":
-        p, m, title = get_user(uid)
+        p, m, t = get_user(uid)
 
         await update.message.reply_text(
             f"👤 الاسم: {name}\n"
             f"⭐ النقاط: {p}\n"
             f"📨 الرسائل: {m}\n"
-            f"🏷️ اللقب: {title}"
+            f"🏷️ اللقب: {t}"
         )
         return
 
@@ -245,18 +247,18 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del active_q[uid]
             await update.message.reply_text("🎉 صحيح +1 ⭐")
 
-# ================= CALLBACKS =================
+# ================= CALLBACK =================
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
     uid = q.from_user.id
-    data = q.data
 
     if not is_admin(uid):
         return await q.answer("❌ غير مصرح", show_alert=True)
 
-    # ===== USERS =====
+    data = q.data
+
     if data == "users":
         cursor.execute("SELECT user_id,name FROM users")
         rows = cursor.fetchall()
@@ -267,11 +269,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
 
         await q.edit_message_text(
-            "👤 اختر مستخدم:",
+            "👤 المستخدمين:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-    # ===== GLOBAL POINTS =====
     elif data == "global_points":
         state[uid] = {"mode": "global_points"}
         await q.edit_message_text("💰 ارسل النقاط الجماعية")
@@ -280,6 +281,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track))
 
