@@ -16,7 +16,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# ================= DB =================
+# ================= DATABASE =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -35,38 +35,38 @@ conn.commit()
 state = {}
 active_q = {}
 
-# ================= TITLES (25 LEVELS) =================
-def get_title(points):
-    levels = [
-        (0, "👶 مبتدئ"),
-        (50, "🌱 متعلم"),
-        (100, "🥉 نشط"),
-        (200, "🥈 جيد"),
-        (300, "🥇 محترف"),
-        (500, "🔥 خبير"),
-        (800, "⚡ متقدم"),
-        (1200, "🚀 قوي"),
-        (2000, "🏆 أسطورة"),
-        (3000, "👑 ملك"),
-        (5000, "💎 أسطوري"),
-        (7000, "⚔️ محارب"),
-        (9000, "🧠 عبقري"),
-        (12000, "🌌 أسطورة العالم"),
-        (15000, "💀 مرعب"),
-        (18000, "🚀 فضائي"),
-        (21000, "👑 ملك الملوك"),
-        (25000, "🔥 نار"),
-        (30000, "💠 نادر"),
-        (35000, "🌀 خارق"),
-        (40000, "🏆 بطل"),
-        (50000, "💎 لا يُهزم"),
-        (70000, "⚡ أسطورة مطلقة"),
-        (90000, "🧿 حكيم"),
-        (120000, "🔱 قائد"),
-    ]
+# ================= 25 TITLES =================
+TITLES = [
+    (0, "👶 مبتدئ"),
+    (50, "🌱 متعلم"),
+    (100, "🥉 نشط"),
+    (200, "🥈 جيد"),
+    (300, "🥇 محترف"),
+    (500, "🔥 خبير"),
+    (800, "⚡ متقدم"),
+    (1200, "🚀 قوي"),
+    (1500, "🏆 أسطورة"),
+    (2000, "👑 ملك"),
+    (2500, "💎 مميز"),
+    (3000, "⚔️ مقاتل"),
+    (4000, "🧠 ذكي"),
+    (5000, "🌌 خارق"),
+    (6000, "💀 مرعب"),
+    (7000, "🚀 فضائي"),
+    (8000, "👑 ملك الملوك"),
+    (9000, "🔥 نار"),
+    (10000, "💠 نادر"),
+    (12000, "🌀 أسطوري"),
+    (15000, "🏆 بطل"),
+    (20000, "💎 لا يُهزم"),
+    (30000, "⚡ أسطورة مطلقة"),
+    (50000, "🧿 حكيم"),
+    (100000, "🔱 قائد"),
+]
 
+def get_title(points):
     title = "👶 مبتدئ"
-    for p, t in levels:
+    for p, t in TITLES:
         if points >= p:
             title = t
     return title
@@ -105,30 +105,29 @@ def set_user(uid, field, value):
 # ================= QUESTIONS (150+) =================
 QUESTIONS = []
 
-for _ in range(100):
-    a = random.randint(1, 50)
-    b = random.randint(1, 50)
-    QUESTIONS.append((f"كم {a}+{b}؟", str(a+b)))
+# توليد 120 سؤال رياضيات
+for _ in range(120):
+    a = random.randint(1, 100)
+    b = random.randint(1, 100)
+    QUESTIONS.append((f"كم {a} + {b}؟", str(a + b)))
 
-for _ in range(50):
-    a = random.randint(50, 200)
-    b = random.randint(10, 100)
-    QUESTIONS.append((f"كم {a}+{b}؟", str(a+b)))
-
+# 30 أسئلة عامة
 QUESTIONS += [
     ("ما عاصمة العراق؟", "بغداد"),
     ("ما عاصمة فرنسا؟", "باريس"),
-    ("ما عدد الكواكب؟", "8"),
+    ("ما عاصمة مصر؟", "القاهرة"),
+    ("ما عاصمة السعودية؟", "الرياض"),
+    ("كم عدد الكواكب؟", "8"),
     ("ما أكبر كوكب؟", "المشتري"),
     ("ما أعلى جبل؟", "إيفرست"),
+    ("ما أكبر محيط؟", "الهادئ"),
 ]
 
 # ================= MENUS =================
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 المستخدمين", callback_data="users")],
-        [InlineKeyboardButton("👥 عرض ID", callback_data="ids")],
-        [InlineKeyboardButton("💰 نقاط جماعية", callback_data="global")]
+        [InlineKeyboardButton("👥 عرض ID", callback_data="ids")]
     ])
 
 
@@ -146,28 +145,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     create_user(uid, update.effective_user.first_name)
 
     if uid == ADMIN_ID:
-        await update.message.reply_text("👑 لوحة الإدارة", reply_markup=admin_menu())
+        await update.message.reply_text("👑 لوحة التحكم", reply_markup=admin_menu())
     else:
         await update.message.reply_text("👋 اكتب: سوال / معلوماتي / top")
 
-# ================= MAIN CHAT =================
+# ================= CHAT =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text.strip()
 
     create_user(uid, update.effective_user.first_name)
 
+    # سوال
     if text in ["سوال", "سؤال"]:
         q, a = random.choice(QUESTIONS)
         active_q[uid] = a
         await update.message.reply_text(q)
         return
 
+    # معلوماتي
     if text == "معلوماتي":
         p, m, t, n = get_user(uid)
         await update.message.reply_text(f"👤 {n}\n⭐ {p}\n📨 {m}\n🏷️ {t}")
         return
 
+    # TOP
     if text == "top":
         cursor.execute("SELECT name,points FROM users ORDER BY points DESC LIMIT 10")
         rows = cursor.fetchall()
@@ -179,6 +181,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
+    # إجابة
     if uid in active_q:
         if text.lower() == active_q[uid].lower():
             p, m, t, n = get_user(uid)
@@ -227,25 +230,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state[uid] = {"target": target}
         await q.edit_message_text("⚙️ اختر:", reply_markup=user_menu(target))
 
-    # EDIT POINTS
+    # POINTS
     elif data.startswith("p:"):
         state[uid] = {"target": data.split(":")[1], "mode": "points"}
         await q.edit_message_text("⭐ ارسل النقاط")
 
-    # EDIT MSG
+    # MESSAGES
     elif data.startswith("m:"):
         state[uid] = {"target": data.split(":")[1], "mode": "messages"}
         await q.edit_message_text("📨 ارسل الرسائل")
 
-    # EDIT TITLE
+    # TITLE
     elif data.startswith("t:"):
         state[uid] = {"target": data.split(":")[1], "mode": "title"}
         await q.edit_message_text("🏷️ ارسل اللقب")
-
-    # GLOBAL
-    elif data == "global":
-        state[uid] = {"mode": "global"}
-        await q.edit_message_text("💰 ارسل النقاط الجماعية")
 
 # ================= STATE =================
 async def state_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -256,7 +254,7 @@ async def state_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     s = state[uid]
-    target = s.get("target")
+    target = s["target"]
 
     try:
         if s["mode"] == "points":
@@ -269,12 +267,10 @@ async def state_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif s["mode"] == "title":
             set_user(target, "title", text)
 
-        elif s["mode"] == "global":
-            cursor.execute("UPDATE users SET points = points + ?", (int(text),))
-            conn.commit()
-
     except:
-        await update.message.reply_text("❌ خطأ")
+        await update.message.reply_text("❌ خطأ في الإدخال")
+        del state[uid]
+        return
 
     del state[uid]
     await update.message.reply_text("✔️ تم التنفيذ")
@@ -285,6 +281,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, state_handler))
 
