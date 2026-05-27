@@ -32,14 +32,13 @@ CREATE TABLE IF NOT EXISTS users (
 c.execute("""
 CREATE TABLE IF NOT EXISTS active_q (
     user_id INTEGER PRIMARY KEY,
-    q TEXT,
-    a TEXT
+    answer TEXT
 )
 """)
 
 conn.commit()
 
-# ================= TITLES (50 LEVELS) =================
+# ================= TITLES =================
 def get_title(msg):
     if msg <= 149:
         return "🌱 جديد"
@@ -56,13 +55,14 @@ def get_title(msg):
 
     return titles[level] if level < len(titles) else "💠 أسطورة"
 
-# ================= SAFE API QUESTION =================
+# ================= SAFE QUESTION =================
 def get_question():
     try:
         url = "https://opentdb.com/api.php?amount=1&type=multiple"
         r = requests.get(url, timeout=5).json()
 
         data = r["results"][0]
+
         q = html.unescape(data["question"])
         a = html.unescape(data["correct_answer"])
 
@@ -71,23 +71,25 @@ def get_question():
     except:
         return "ما هي عاصمة العراق؟", "بغداد"
 
-# ================= MAIN =================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 أهلاً بك في البوت")
 
+# ================= MAIN =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user
     uid = user.id
     name = user.first_name
-    text = update.message.text
+    text = update.message.text.strip()
 
-    # get user
+    # ================= GET USER =================
     c.execute("SELECT points,messages,title FROM users WHERE user_id=?", (uid,))
     row = c.fetchone()
 
     if not row:
         points, messages, title = 0, 0, "🌱 جديد"
-        c.execute("INSERT INTO users VALUES (?,?,0,0,'🌱 جديد')", (uid,name))
+        c.execute("INSERT INTO users VALUES (?,?,0,0,'🌱 جديد')", (uid, name))
         conn.commit()
     else:
         points, messages, title = row
@@ -104,16 +106,17 @@ f"""👤 معلوماتك
 
     # ================= QUESTION =================
     if text in ["سؤال", "سوال"]:
+
         q, a = get_question()
 
-        c.execute("REPLACE INTO active_q VALUES (?,?,?)",(uid,q,a))
+        c.execute("REPLACE INTO active_q VALUES (?,?)", (uid, a))
         conn.commit()
 
         await update.message.reply_text(f"❓ {q}")
         return
 
-    # ================= ANSWER =================
-    c.execute("SELECT a FROM active_q WHERE user_id=?", (uid,))
+    # ================= ANSWER CHECK =================
+    c.execute("SELECT answer FROM active_q WHERE user_id=?", (uid,))
     active = c.fetchone()
 
     if active:
@@ -144,19 +147,20 @@ f"""👤 معلوماتك
 
     conn.commit()
 
-    # ================= LEVEL UP ANNOUNCE =================
+    # ================= LEVEL UP GLOBAL =================
     if new_title != old_title:
-        try:
-            await context.bot.send_message(
-                chat_id=GROUP_ID,
-                text=f"""🎉 ترقية جديدة!
+        if GROUP_ID != 0:
+            try:
+                await context.bot.send_message(
+                    chat_id=GROUP_ID,
+                    text=f"""🎉 ترقية جديدة!
 
 👤 {name}
 🏅 {new_title}
 💬 {messages} رسالة"""
-            )
-        except:
-            pass
+                )
+            except:
+                pass
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
@@ -164,5 +168,5 @@ app = Application.builder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 BOT RUNNING")
+print("🚀 BOT RUNNING FIXED VERSION")
 app.run_polling()
