@@ -17,7 +17,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# ================= DATABASE =================
+# ================= DB =================
 conn = sqlite3.connect("data.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -33,14 +33,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS titles (
-    min_points INTEGER PRIMARY KEY,
+    min_points INTEGER,
     title TEXT
 )
 """)
 
 conn.commit()
 
-# ================= BACKUP =================
+# ================= JSON BACKUP =================
 def save_json():
     data = {}
     cursor.execute("SELECT * FROM users")
@@ -55,7 +55,7 @@ def save_json():
     with open("backup.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ================= TITLES (25) =================
+# ================= 25 TITLES =================
 def init_titles():
     if cursor.execute("SELECT COUNT(*) FROM titles").fetchone()[0] == 0:
         base = [
@@ -90,14 +90,16 @@ def init_titles():
 
 init_titles()
 
-# ================= QUESTIONS (150+) =================
+# ================= 150+ QUESTIONS =================
 QUESTIONS = []
 
+# 120 رياضيات
 for i in range(120):
     a = random.randint(1, 50)
     b = random.randint(1, 50)
     QUESTIONS.append((f"كم {a} + {b}؟", str(a + b)))
 
+# 30 عامة
 general = [
     ("ما عاصمة العراق؟", "بغداد"),
     ("ما عاصمة فرنسا؟", "باريس"),
@@ -194,10 +196,11 @@ def add_message(uid):
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 المستخدمين", callback_data="users")],
+        [InlineKeyboardButton("🏷️ الألقاب", callback_data="titles")],
         [InlineKeyboardButton("💰 نقاط جماعية", callback_data="global_points")]
     ])
 
-# ================= /START =================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     name = update.effective_user.first_name
@@ -205,23 +208,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     get_user(uid, name)
 
     if is_admin(uid):
-        await update.message.reply_text("👑 لوحة الأدمن", reply_markup=admin_menu())
+        await update.message.reply_text("👑 لوحة التحكم", reply_markup=admin_menu())
     else:
         await update.message.reply_text("👋 اكتب: سوال أو معلوماتي")
 
 # ================= TRACK =================
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-
-    uid = update.message.from_user.id
-    name = update.message.from_user.first_name
+    uid = update.effective_user.id
     text = update.message.text.strip()
 
-    get_user(uid, name)
+    get_user(uid, update.effective_user.first_name)
     add_message(uid)
 
-    # ===== سوال =====
+    # ===== سؤال =====
     if text in ["سوال", "سؤال"]:
         q, a = random.choice(QUESTIONS)
         active_q[uid] = a
@@ -233,7 +232,7 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p, m, t = get_user(uid)
 
         await update.message.reply_text(
-            f"👤 الاسم: {name}\n"
+            f"👤 الاسم: {update.effective_user.first_name}\n"
             f"⭐ النقاط: {p}\n"
             f"📨 الرسائل: {m}\n"
             f"🏷️ اللقب: {t}"
@@ -253,25 +252,32 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     uid = q.from_user.id
-
-    if not is_admin(uid):
-        return await q.answer("❌ غير مصرح", show_alert=True)
-
     data = q.data
 
+    if not is_admin(uid):
+        return
+
     if data == "users":
-        cursor.execute("SELECT user_id,name FROM users")
+        cursor.execute("SELECT user_id,name,points FROM users")
         rows = cursor.fetchall()
 
         keyboard = [
-            [InlineKeyboardButton(r[1], callback_data=f"u_{r[0]}")]
+            [InlineKeyboardButton(f"{r[1]} | ⭐{r[2]}", callback_data=f"user_{r[0]}")]
             for r in rows
         ]
 
-        await q.edit_message_text(
-            "👤 المستخدمين:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await q.edit_message_text("👤 المستخدمين:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "titles":
+        cursor.execute("SELECT min_points,title FROM titles ORDER BY min_points")
+        rows = cursor.fetchall()
+
+        keyboard = [
+            [InlineKeyboardButton(f"{r[1]} ({r[0]}⭐)", callback_data=f"t_{r[0]}")]
+            for r in rows
+        ]
+
+        await q.edit_message_text("🏷️ الألقاب:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "global_points":
         state[uid] = {"mode": "global_points"}
