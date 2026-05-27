@@ -23,7 +23,7 @@ active_question = {}
 
 # ====== KEYBOARD ======
 keyboard = ReplyKeyboardMarkup(
-    [["نقاطي", "معلوماتي"], ["سؤال"]],
+    [["نقاطي", "معلوماتي"], ["سوال"]],
     resize_keyboard=True
 )
 
