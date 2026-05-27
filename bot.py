@@ -1,75 +1,161 @@
 import os
 import random
+import asyncio
+from collections import defaultdict
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-# ====== VARIABLES ======
+# ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-GROUP_ID = os.getenv("GROUP_ID")
 
-# ====== DATA (simple memory) ======
-user_points = {}
-user_messages = {}
-
-questions = [
-    ("ما عاصمة العراق؟", "بغداد"),
-    ("كم عدد قارات العالم؟", "7"),
-    ("ما هو أكبر كوكب؟", "المشتري"),
-    ("كم عدد أيام الأسبوع؟", "7"),
-]
+# ================== DATA ==================
+points = defaultdict(int)
+xp = defaultdict(int)
+messages = defaultdict(int)
 
 active_question = {}
 
-# ====== KEYBOARD ======
-keyboard = ReplyKeyboardMarkup(
-    [["نقاطي", "معلوماتي"], ["سوال"]],
+admin_state = {}
+
+# ================== QUESTIONS ==================
+questions = [
+    ("ما عاصمة العراق؟", "بغداد"),
+    ("كم عدد الكواكب؟", "8"),
+    ("ما أكبر قارة؟", "آسيا"),
+    ("كم عدد أيام الأسبوع؟", "7"),
+    ("ما نتيجة 2+2؟", "4"),
+]
+
+# ================== KEYBOARDS ==================
+user_kb = ReplyKeyboardMarkup(
+    [["نقاطي", "معلوماتي"], ["سؤال"]],
     resize_keyboard=True
 )
 
-# ====== START ======
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 أهلاً بك في بوت المسابقات!", reply_markup=keyboard)
+admin_kb = ReplyKeyboardMarkup(
+    [
+        ["سؤال مفاجئ", "عرض مستخدم"],
+        ["تعديل نقاط", "إضافة نقاط"],
+        ["Top 10", "إيقاف"]
+    ],
+    resize_keyboard=True
+)
 
-# ====== MESSAGE TRACKING ======
-async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+# ================== CHECK ADMIN ==================
+def is_admin(uid):
+    return uid == ADMIN_ID
 
-    user_messages[user_id] = user_messages.get(user_id, 0) + 1
+# ================== HANDLER ==================
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    uid = user.id
+    text = update.message.text.strip()
 
-    text = update.message.text
+    chat_type = update.effective_chat.type  # private / group
 
-    # Points command
+    # عداد رسائل
+    messages[uid] += 1
+
+    # ================= USER =================
     if text == "نقاطي":
-        points = user_points.get(user_id, 0)
-        await update.message.reply_text(f"⭐ نقاطك: {points}")
-        return
+        return await update.message.reply_text(
+            f"⭐ النقاط: {points[uid]}\n✨ XP: {xp[uid]}"
+        )
 
-    # Info command
     if text == "معلوماتي":
-        msgs = user_messages.get(user_id, 0)
-        points = user_points.get(user_id, 0)
-        await update.message.reply_text(f"📊 الرسائل: {msgs}\n⭐ النقاط: {points}")
-        return
+        return await update.message.reply_text(
+            f"📊 الرسائل: {messages[uid]}\n⭐ النقاط: {points[uid]}\n✨ XP: {xp[uid]}"
+        )
 
-    # Ask question
-    if text == "سوال":
+    if text == "سؤال":
         q, a = random.choice(questions)
-        active_question["q"] = q
-        active_question["a"] = a
-        await update.message.reply_text(f"❓ {q}")
-        return
+        active_question["answer"] = a
+        return await update.message.reply_text(f"❓ {q}")
 
-    # Answer check
-    if "a" in active_question:
-        if text.strip() == active_question["a"]:
-            user_points[user_id] = user_points.get(user_id, 0) + 1
-            await update.message.reply_text(f"🎉 إجابة صحيحة! تم إضافة نقطة لك")
+    # ================= ANSWER =================
+    if "answer" in active_question:
+        if text.lower() == active_question["answer"].lower():
+            points[uid] += 1
+            xp[uid] += 1
             active_question.clear()
+            return await update.message.reply_text("🎉 صحيح +1 نقطة +1 XP")
         else:
-            await update.message.reply_text("❌ إجابة خاطئة")
+            return await update.message.reply_text("❌ خطأ")
 
-# ====== MAIN ======
+    # ================= ADMIN PANEL TRIGGER =================
+    if text == "$تعديل":
+
+        # ممنوع داخل المجموعة
+        if chat_type != "private":
+            return
+
+        if is_admin(uid):
+            return await update.message.reply_text(
+                "👑 لوحة الأدمن:",
+                reply_markup=admin_kb
+            )
+        else:
+            return await update.message.reply_text("❌ ليس لديك صلاحية")
+
+    # ================= ADMIN ACTIONS =================
+    if is_admin(uid):
+
+        if text == "سؤال مفاجئ":
+            q, a = random.choice(questions)
+            active_question["answer"] = a
+            return await update.message.reply_text(f"🚨 سؤال مفاجئ:\n❓ {q}")
+
+        if text == "Top 10":
+            top = sorted(points.items(), key=lambda x: x[1], reverse=True)[:10]
+            msg = "🏆 أفضل اللاعبين:\n"
+            for i, (u, p) in enumerate(top, 1):
+                msg += f"{i}- {u}: {p}\n"
+            return await update.message.reply_text(msg)
+
+        if text == "عرض مستخدم":
+            admin_state[uid] = "view"
+            return await update.message.reply_text("👤 أرسل ID المستخدم")
+
+        if text == "تعديل نقاط":
+            admin_state[uid] = "set"
+            return await update.message.reply_text("✏️ أرسل: ID + نقاط")
+
+        if text == "إضافة نقاط":
+            admin_state[uid] = "add"
+            return await update.message.reply_text("➕ أرسل: ID + نقاط")
+
+        if text == "إيقاف":
+            admin_state.clear()
+            return await update.message.reply_text("⛔ تم إيقاف وضع الأدمن")
+
+    # ================= ADMIN INPUT =================
+    if is_admin(uid) and uid in admin_state:
+
+        parts = text.split()
+
+        try:
+            target = int(parts[0])
+
+            if admin_state[uid] == "set":
+                points[target] = int(parts[1])
+                admin_state.pop(uid)
+                return await update.message.reply_text("✅ تم تعديل النقاط")
+
+            if admin_state[uid] == "add":
+                points[target] += int(parts[1])
+                admin_state.pop(uid)
+                return await update.message.reply_text("➕ تم الإضافة")
+
+            if admin_state[uid] == "view":
+                return await update.message.reply_text(
+                    f"👤 ID: {target}\n⭐ نقاط: {points[target]}\n📊 رسائل: {messages[target]}\n✨ XP: {xp[target]}"
+                )
+
+        except:
+            return await update.message.reply_text("❌ خطأ في الإدخال")
+
+# ================== MAIN ==================
 def main():
     if not BOT_TOKEN:
         print("BOT_TOKEN missing")
@@ -77,10 +163,9 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("Bot is running...")
+    print("Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
