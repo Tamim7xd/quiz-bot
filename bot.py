@@ -1,7 +1,6 @@
 import os
 import random
 import sqlite3
-import json
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -17,7 +16,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# ================= DATABASE =================
+# ================= DB =================
 conn = sqlite3.connect("data.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -30,102 +29,13 @@ CREATE TABLE IF NOT EXISTS users (
     title TEXT DEFAULT '👶 مبتدئ'
 )
 """)
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS titles (
-    min_points INTEGER,
-    title TEXT
-)
-""")
-
 conn.commit()
 
 state = {}
 active_q = {}
 
-# ================= BACKUP =================
-def save_json():
-    data = {}
-    cursor.execute("SELECT * FROM users")
-    for r in cursor.fetchall():
-        data[r[0]] = {
-            "name": r[1],
-            "points": r[2],
-            "messages": r[3],
-            "title": r[4]
-        }
-
-    with open("backup.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# ================= 25 TITLES =================
-def init_titles():
-    if cursor.execute("SELECT COUNT(*) FROM titles").fetchone()[0] == 0:
-        base = [
-            (0, "👶 مبتدئ"),
-            (20, "🌱 مبتدئ نشط"),
-            (50, "🥉 متعلم"),
-            (100, "🥈 نشط"),
-            (200, "🥇 محترف"),
-            (500, "🔥 خبير"),
-            (1000, "🏆 أسطورة"),
-            (2000, "👑 ملك"),
-            (5000, "💎 أسطوري"),
-            (10000, "⚔️ خارق"),
-            (15000, "🧠 عبقري"),
-            (20000, "🌌 أسطورة العالم"),
-            (30000, "💀 مرعب"),
-            (40000, "🚀 فضائي"),
-            (50000, "👑 ملك الملوك"),
-            (60000, "🔥 نار"),
-            (70000, "💠 نادر"),
-            (80000, "🌀 أسطوري جداً"),
-            (90000, "🏆 بطل"),
-            (100000, "💎 لا يُهزم"),
-            (120000, "⚡ سريع"),
-            (140000, "🧿 حكيم"),
-            (160000, "🔱 قائد"),
-            (180000, "👁️ مراقب"),
-            (200000, "🌟 نجم خارق"),
-        ]
-        cursor.executemany("INSERT INTO titles VALUES (?,?)", base)
-        conn.commit()
-
-init_titles()
-
-# ================= QUESTIONS (150+) =================
-QUESTIONS = []
-
-# easy 60
-for _ in range(60):
-    a = random.randint(1, 10)
-    b = random.randint(1, 10)
-    QUESTIONS.append((f"كم {a}+{b}؟", str(a+b)))
-
-# medium 60
-for _ in range(60):
-    a = random.randint(10, 50)
-    b = random.randint(10, 50)
-    QUESTIONS.append((f"كم {a}+{b}؟", str(a+b)))
-
-# hard 30
-for _ in range(30):
-    a = random.randint(50, 200)
-    b = random.randint(50, 200)
-    QUESTIONS.append((f"كم {a}+{b}؟", str(a+b)))
-
-# general
-QUESTIONS += [
-    ("ما عاصمة العراق؟", "بغداد"),
-    ("ما عاصمة فرنسا؟", "باريس"),
-    ("ما عاصمة مصر؟", "القاهرة"),
-    ("ما عاصمة السعودية؟", "الرياض"),
-    ("ما عاصمة أمريكا؟", "واشنطن"),
-    ("ما أكبر كوكب؟", "المشتري"),
-    ("ما عدد الكواكب؟", "8"),
-    ("ما أعلى جبل؟", "إيفرست"),
-    ("ما أكبر محيط؟", "الهادئ"),
-]
+# ================= QUESTIONS =================
+QUESTIONS = [(f"كم {i}+{i+1}؟", str(i + i + 1)) for i in range(1, 100)]
 
 # ================= HELPERS =================
 def is_admin(uid):
@@ -133,53 +43,39 @@ def is_admin(uid):
 
 
 def get_user(uid, name=""):
-    cursor.execute("SELECT points, messages, title FROM users WHERE user_id=?", (str(uid),))
+    cursor.execute("SELECT points,messages,title,name FROM users WHERE user_id=?", (str(uid),))
     row = cursor.fetchone()
 
     if not row:
-        cursor.execute("INSERT INTO users VALUES (?,?,?,?,?)",
-                       (str(uid), name, 0, 0, "👶 مبتدئ"))
+        cursor.execute(
+            "INSERT INTO users VALUES (?,?,?,?,?)",
+            (str(uid), name, 0, 0, "👶 مبتدئ")
+        )
         conn.commit()
-        save_json()
-        return (0, 0, "👶 مبتدئ")
+        return (0, 0, "👶 مبتدئ", name)
 
     return row
 
 
-def add_points(uid, v):
-    p, m, t = get_user(uid)
-    cursor.execute("UPDATE users SET points=? WHERE user_id=?", (p + v, str(uid)))
+def update_user(uid, **kwargs):
+    for k, v in kwargs.items():
+        cursor.execute(f"UPDATE users SET {k}=? WHERE user_id=?", (v, str(uid)))
     conn.commit()
-    save_json()
-
-
-def add_message(uid):
-    p, m, t = get_user(uid)
-    cursor.execute("UPDATE users SET messages=? WHERE user_id=?", (m + 1, str(uid)))
-    conn.commit()
-    save_json()
-
-
-def get_top():
-    cursor.execute("SELECT name, points FROM users ORDER BY points DESC LIMIT 10")
-    return cursor.fetchall()
-
 
 # ================= ADMIN MENU =================
 def admin_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 المستخدمين", callback_data="users")],
-        [InlineKeyboardButton("🏷️ الألقاب", callback_data="titles")],
-        [InlineKeyboardButton("💰 نقاط جماعية", callback_data="global")]
+        [InlineKeyboardButton("👤 العضو + ID", callback_data="show_ids")],
+        [InlineKeyboardButton("💰 نقاط جماعية", callback_data="global")],
     ])
 
 
 def user_panel(uid):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ نقاط", callback_data=f"p_{uid}")],
-        [InlineKeyboardButton("📨 رسائل", callback_data=f"m_{uid}")],
-        [InlineKeyboardButton("🏷️ لقب", callback_data=f"t_{uid}")],
-        [InlineKeyboardButton("❌ حذف", callback_data=f"d_{uid}")],
+        [InlineKeyboardButton("⭐ تعديل نقاط", callback_data=f"p_{uid}")],
+        [InlineKeyboardButton("📨 تعديل رسائل", callback_data=f"m_{uid}")],
+        [InlineKeyboardButton("🏷️ تعديل لقب", callback_data=f"t_{uid}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="users")]
     ])
 
@@ -191,7 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(uid):
         await update.message.reply_text("👑 لوحة التحكم", reply_markup=admin_menu())
     else:
-        await update.message.reply_text("👋 اكتب: سوال / معلوماتي / top")
+        await update.message.reply_text("👋 اكتب: سوال / معلوماتي")
 
 # ================= TRACK =================
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,30 +95,27 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     get_user(uid, update.effective_user.first_name)
-    add_message(uid)
 
+    # سوال
     if text in ["سوال", "سؤال"]:
         q, a = random.choice(QUESTIONS)
         active_q[uid] = a
         await update.message.reply_text(q)
         return
 
+    # معلوماتي
     if text == "معلوماتي":
-        p, m, t = get_user(uid)
-        await update.message.reply_text(f"⭐ {p}\n📨 {m}\n🏷️ {t}")
+        p, m, t, n = get_user(uid)
+        await update.message.reply_text(
+            f"👤 {n}\n⭐ {p}\n📨 {m}\n🏷️ {t}"
+        )
         return
 
-    if text == "top":
-        top = get_top()
-        msg = "🏆 TOP 10\n\n"
-        for i, (n, p) in enumerate(top, 1):
-            msg += f"{i}) {n} ⭐ {p}\n"
-        await update.message.reply_text(msg)
-        return
-
+    # إجابة
     if uid in active_q:
         if text.lower() == active_q[uid].lower():
-            add_points(uid, 1)
+            p, m, t, n = get_user(uid)
+            update_user(uid, points=p+1)
             del active_q[uid]
             await update.message.reply_text("✔️ صحيح +1")
 
@@ -237,6 +130,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         return
 
+    # ===== USERS =====
     if data == "users":
         cursor.execute("SELECT user_id,name,points FROM users")
         rows = cursor.fetchall()
@@ -248,35 +142,44 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await q.edit_message_text("👤 المستخدمين:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # ===== SHOW USER + ID (طلبك الجديد) =====
+    elif data == "show_ids":
+        cursor.execute("SELECT user_id,name FROM users")
+        rows = cursor.fetchall()
+
+        text = "👤 الأعضاء:\n\n"
+        for r in rows:
+            text += f"• {r[1]}\n🆔 {r[0]}\n\n"
+
+        await q.edit_message_text(text)
+
+    # ===== OPEN USER =====
     elif data.startswith("user_"):
         target = data.split("_")[1]
         state[uid] = {"target": target}
-        await q.edit_message_text("⚙️ اختر:", reply_markup=user_panel(target))
+        await q.edit_message_text("⚙️ إدارة المستخدم", reply_markup=user_panel(target))
 
+    # ===== EDIT POINTS =====
     elif data.startswith("p_"):
         state[uid] = {"target": data.split("_")[1], "mode": "points"}
         await q.edit_message_text("⭐ ارسل النقاط")
 
+    # ===== EDIT MESSAGES =====
     elif data.startswith("m_"):
-        state[uid] = {"target": data.split("_")[1], "mode": "msgs"}
+        state[uid] = {"target": data.split("_")[1], "mode": "messages"}
         await q.edit_message_text("📨 ارسل الرسائل")
 
+    # ===== EDIT TITLE =====
     elif data.startswith("t_"):
         state[uid] = {"target": data.split("_")[1], "mode": "title"}
         await q.edit_message_text("🏷️ ارسل اللقب")
 
-    elif data.startswith("d_"):
-        target = data.split("_")[1]
-        cursor.execute("DELETE FROM users WHERE user_id=?", (target,))
-        conn.commit()
-        save_json()
-        await q.edit_message_text("❌ تم الحذف")
-
+    # ===== GLOBAL =====
     elif data == "global":
         state[uid] = {"mode": "global"}
         await q.edit_message_text("💰 ارسل النقاط الجماعية")
 
-# ================= TEXT =================
+# ================= TEXT HANDLER (FIXED) =================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text.strip()
@@ -285,29 +188,32 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     s = state[uid]
+    target = s.get("target")
 
+    # ⭐ نقاط
     if s["mode"] == "points":
-        cursor.execute("UPDATE users SET points=? WHERE user_id=?", (int(text), s["target"]))
-        conn.commit()
-        save_json()
+        update_user(target, points=int(text))
+        del state[uid]
+        await update.message.reply_text("✔️ تم تعديل النقاط")
 
-    elif s["mode"] == "msgs":
-        cursor.execute("UPDATE users SET messages=? WHERE user_id=?", (int(text), s["target"]))
-        conn.commit()
-        save_json()
+    # 📨 رسائل
+    elif s["mode"] == "messages":
+        update_user(target, messages=int(text))
+        del state[uid]
+        await update.message.reply_text("✔️ تم تعديل الرسائل")
 
+    # 🏷️ لقب
     elif s["mode"] == "title":
-        cursor.execute("UPDATE users SET title=? WHERE user_id=?", (text, s["target"]))
-        conn.commit()
-        save_json()
+        update_user(target, title=text)
+        del state[uid]
+        await update.message.reply_text("✔️ تم تعديل اللقب")
 
+    # 💰 جماعي
     elif s["mode"] == "global":
         cursor.execute("UPDATE users SET points = points + ?", (int(text),))
         conn.commit()
-        save_json()
-
-    del state[uid]
-    await update.message.reply_text("✔️ تم التنفيذ")
+        del state[uid]
+        await update.message.reply_text("✔️ تم إضافة نقاط جماعية")
 
 # ================= MAIN =================
 def main():
