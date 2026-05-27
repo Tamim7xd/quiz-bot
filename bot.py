@@ -1,12 +1,11 @@
 import os
 import sqlite3
 import random
-import traceback
 import requests
 import html
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ================= ENV =================
 TOKEN = os.getenv("BOT_TOKEN")
@@ -38,17 +37,10 @@ CREATE TABLE IF NOT EXISTS active_q (
 )
 """)
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS used_questions (
-    q TEXT PRIMARY KEY
-)
-""")
-
 conn.commit()
 
 # ================= TITLES (50 LEVELS) =================
-def get_title_by_messages(msg):
-
+def get_title(msg):
     if msg <= 149:
         return "🌱 جديد"
 
@@ -59,158 +51,118 @@ def get_title_by_messages(msg):
         "⭐ مميز","🏅 محترف","🥇 نجم","👑 قائد","💎 خبير",
         "🏆 أسطورة","⚔️ محارب","🛡️ حارس","🌟 سوبر ستار","💥 خارق",
         "🎮 لاعب","🧩 محلل","📚 مثقف","🌍 رحّالة","⚙️ عبقري",
-        "🧿 نادر","👑 ملك","💠 أسطورة عليا","🔥 Legend X","⚡ Ultra Pro",
-        "🚀 Elite","🏆 Titan","💎 Diamond","👑 King Pro","🌟 Mythic",
-        "⚔️ Warrior X","🧠 Genius","💥 Destroyer","🎯 Sharp","🏅 Master Pro",
-        "🥇 Gold Elite","💠 Crystal","🔥 Inferno","🚀 Rocket","⚡ Storm",
-        "🌍 Explorer","👑 Supreme","🏆 Eternal","💎 Divine","🔥 God Mode",
-        "🌟 Infinity","⚔️ Final Boss"
+        "🧿 نادر","👑 ملك","💠 أسطورة عليا"
     ]
 
-    if level < len(titles):
-        return titles[level]
-    else:
-        return "💠 Ultimate Legend"
+    return titles[level] if level < len(titles) else "💠 أسطورة"
 
-# ================= API QUESTION =================
-def get_api_question():
-    url = "https://opentdb.com/api.php?amount=1&type=multiple"
-    r = requests.get(url).json()
+# ================= SAFE API QUESTION =================
+def get_question():
+    try:
+        url = "https://opentdb.com/api.php?amount=1&type=multiple"
+        r = requests.get(url, timeout=5).json()
 
-    data = r["results"][0]
+        data = r["results"][0]
+        q = html.unescape(data["question"])
+        a = html.unescape(data["correct_answer"])
 
-    question = html.unescape(data["question"])
-    answer = html.unescape(data["correct_answer"])
+        return q, a
 
-    return question, answer
+    except:
+        return "ما هي عاصمة العراق؟", "بغداد"
 
-# ================= HELPERS =================
-def get_user(uid, name):
+# ================= MAIN =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 أهلاً بك في البوت")
+
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    uid = user.id
+    name = user.first_name
+    text = update.message.text
+
+    # get user
     c.execute("SELECT points,messages,title FROM users WHERE user_id=?", (uid,))
     row = c.fetchone()
 
     if not row:
+        points, messages, title = 0, 0, "🌱 جديد"
         c.execute("INSERT INTO users VALUES (?,?,0,0,'🌱 جديد')", (uid,name))
         conn.commit()
-        return 0,0,"🌱 جديد"
-
-    return row
-
-def save_user(uid, name, p, m, t):
-    c.execute("UPDATE users SET name=?,points=?,messages=?,title=? WHERE user_id=?",
-              (name,p,m,t,uid))
-    conn.commit()
-
-# ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-
-    if uid == ADMIN_ID:
-        kb = [[InlineKeyboardButton("🛠 لوحة الأدمن", callback_data="panel")]]
-        await update.message.reply_text("🔥 أهلاً أدمن", reply_markup=InlineKeyboardMarkup(kb))
     else:
-        await update.message.reply_text("👋 أهلاً بك\nاكتب: معلوماتي / سؤال")
+        points, messages, title = row
 
-# ================= CALLBACK =================
-async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    if q.from_user.id != ADMIN_ID:
-        return
-
-    if q.data == "panel":
-        kb = [[InlineKeyboardButton("👥 الأعضاء", callback_data="users")]]
-        await q.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
-
-# ================= MAIN =================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user = update.effective_user
-        uid = user.id
-        name = user.first_name
-        text = update.message.text
-
-        points, messages, title = get_user(uid, name)
-
-        # ================= INFO =================
-        if text == "معلوماتي":
-            await update.message.reply_text(
+    # ================= INFO =================
+    if text == "معلوماتي":
+        await update.message.reply_text(
 f"""👤 معلوماتك
 🔢 نقاط: {points}
 💬 رسائل: {messages}
 🏅 لقب: {title}"""
-            )
-            return
+        )
+        return
 
-        # ================= QUESTION =================
-        if text in ["سؤال", "سوال"]:
+    # ================= QUESTION =================
+    if text in ["سؤال", "سوال"]:
+        q, a = get_question()
 
-            while True:
-                q, a = get_api_question()
+        c.execute("REPLACE INTO active_q VALUES (?,?,?)",(uid,q,a))
+        conn.commit()
 
-                c.execute("SELECT q FROM used_questions WHERE q=?", (q,))
-                if not c.fetchone():
-                    break
+        await update.message.reply_text(f"❓ {q}")
+        return
 
-            c.execute("INSERT INTO used_questions VALUES (?)", (q,))
-            conn.commit()
+    # ================= ANSWER =================
+    c.execute("SELECT a FROM active_q WHERE user_id=?", (uid,))
+    active = c.fetchone()
 
-            c.execute("REPLACE INTO active_q VALUES (?,?,?)",(uid,q,a))
-            conn.commit()
+    if active:
+        correct = active[0]
 
-            await update.message.reply_text(f"❓ {q}")
-            return
+        if text.lower() == correct.lower():
+            points += 5
+            await update.message.reply_text("✅ صحيح +5")
+        else:
+            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
 
-        # ================= ANSWER =================
-        c.execute("SELECT q,a FROM active_q WHERE user_id=?", (uid,))
-        active = c.fetchone()
+        c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
+        conn.commit()
 
-        if active:
-            correct = active[1]
+    # ================= UPDATE STATS =================
+    old_title = title
 
-            if text.lower() == correct.lower():
-                await update.message.reply_text("✅ صحيح +5")
-                points += 5
-            else:
-                await update.message.reply_text(f"❌ خطأ: {correct}")
+    messages += 1
+    points += 1
 
-            c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
-            conn.commit()
+    new_title = get_title(messages)
 
-        # ================= UPDATE =================
-        old = title
+    c.execute("""
+        UPDATE users
+        SET points=?, messages=?, title=?
+        WHERE user_id=?
+    """, (points, messages, new_title, uid))
 
-        points += 1
-        messages += 1
+    conn.commit()
 
-        new = get_title_by_messages(messages)
-
-        save_user(uid,name,points,messages,new)
-
-        # ================= GLOBAL LEVEL UP =================
-        if new != old:
-            try:
-                await context.bot.send_message(
-                    chat_id=GROUP_ID,
-                    text=f"""🎉 ترقية جديدة!
+    # ================= LEVEL UP ANNOUNCE =================
+    if new_title != old_title:
+        try:
+            await context.bot.send_message(
+                chat_id=GROUP_ID,
+                text=f"""🎉 ترقية جديدة!
 
 👤 {name}
-🏅 {new}
+🏅 {new_title}
 💬 {messages} رسالة"""
-                )
-            except:
-                pass
-
-    except Exception:
-        print(traceback.format_exc())
+            )
+        except:
+            pass
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(callback))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 BOT FULL READY RUNNING")
+print("🚀 BOT RUNNING")
 app.run_polling()
