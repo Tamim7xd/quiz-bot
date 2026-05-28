@@ -1,21 +1,25 @@
 import os
 import sqlite3
-import random
 import requests
 import html
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-# ================= ENV =================
+# ================= TOKEN =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
 
 if not TOKEN:
     raise Exception("BOT_TOKEN is missing")
 
-# ================= DB =================
+# ================= DATABASE =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -32,7 +36,6 @@ CREATE TABLE IF NOT EXISTS users (
 c.execute("""
 CREATE TABLE IF NOT EXISTS active_q (
     user_id INTEGER PRIMARY KEY,
-    question TEXT,
     answer TEXT
 )
 """)
@@ -40,99 +43,159 @@ CREATE TABLE IF NOT EXISTS active_q (
 conn.commit()
 
 # ================= TITLES =================
-def get_title(msg):
-    if msg <= 149:
+titles = [
+    "🌿 مبتدئ",
+    "⚡ متعلم",
+    "🔥 نشيط",
+    "🚀 متفاعل",
+    "🎯 متقدم",
+    "⭐ مميز",
+    "🏅 محترف",
+    "🥇 نجم",
+    "👑 قائد",
+    "💎 خبير",
+    "🏆 أسطورة",
+]
+
+def get_title(messages):
+    if messages <= 149:
         return "🌱 جديد"
 
-    level = (msg - 150) // 100
+    level = (messages - 150) // 100
 
-    titles = [
-        "🌿 مبتدئ","⚡ متعلم","🔥 نشيط","🚀 متفاعل","🎯 متقدم",
-        "⭐ مميز","🏅 محترف","🥇 نجم","👑 قائد","💎 خبير",
-        "🏆 أسطورة","⚔️ محارب","🛡️ حارس","🌟 سوبر ستار","💥 خارق",
-        "🎮 لاعب","🧩 محلل","📚 مثقف","🌍 رحّالة","⚙️ عبقري",
-        "🧿 نادر","👑 ملك","💠 أسطورة عليا"
-    ]
+    if level >= len(titles):
+        return "💠 أسطورة عليا"
 
-    return titles[level] if level < len(titles) else "💠 أسطورة"
+    return titles[level]
 
-# ================= API QUESTION =================
+# ================= QUESTIONS =================
 def get_question():
     try:
         url = "https://opentdb.com/api.php?amount=1&type=multiple"
-        r = requests.get(url, timeout=5).json()
 
-        data = r["results"][0]
+        response = requests.get(url, timeout=5)
+        data = response.json()
 
-        q = html.unescape(data["question"])
-        a = html.unescape(data["correct_answer"])
+        result = data["results"][0]
 
-        return q, a
+        question = html.unescape(result["question"])
+        answer = html.unescape(result["correct_answer"])
+
+        return question, answer
 
     except:
-        return "ما هي عاصمة العراق؟", "بغداد"
+        return "ما عاصمة العراق؟", "بغداد"
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 أهلاً بك في البوت")
+    await update.message.reply_text(
+        "👋 أهلاً بك\n\n"
+        "الأوامر:\n"
+        "• معلوماتي\n"
+        "• سؤال / سوال"
+    )
 
 # ================= MAIN =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not update.message:
+        return
+
+    text = update.message.text
+
+    if not text:
+        return
+
+    text = text.strip()
+
     user = update.effective_user
     uid = user.id
     name = user.first_name
-    text = update.message.text.strip()
 
     # ================= GET USER =================
-    c.execute("SELECT points,messages,title FROM users WHERE user_id=?", (uid,))
+    c.execute(
+        "SELECT points,messages,title FROM users WHERE user_id=?",
+        (uid,)
+    )
+
     row = c.fetchone()
 
-    if not row:
-        points, messages, title = 0, 0, "🌱 جديد"
-        c.execute("INSERT INTO users VALUES (?,?,0,0,'🌱 جديد')", (uid, name))
-        conn.commit()
-    else:
+    if row:
         points, messages, title = row
+    else:
+        points = 0
+        messages = 0
+        title = "🌱 جديد"
+
+        c.execute(
+            "INSERT INTO users VALUES (?,?,?,?,?)",
+            (uid, name, points, messages, title)
+        )
+
+        conn.commit()
 
     # ================= INFO =================
     if text == "معلوماتي":
+
         await update.message.reply_text(
-f"""👤 معلوماتك
-🔢 نقاط: {points}
-💬 رسائل: {messages}
-🏅 لقب: {title}"""
+            f"👤 اسمك: {name}\n"
+            f"🔢 نقاطك: {points}\n"
+            f"💬 رسائلك: {messages}\n"
+            f"🏅 لقبك: {title}"
         )
+
         return
 
     # ================= QUESTION =================
-    if text in ["سؤال", "سوال"]:
+    if text.lower() in ["سؤال", "سوال"]:
 
-        q, a = get_question()
+        question, answer = get_question()
 
         c.execute(
-            "REPLACE INTO active_q VALUES (?,?,?)",
-            (uid, q, a)
+            "REPLACE INTO active_q VALUES (?,?)",
+            (uid, answer)
         )
+
         conn.commit()
 
-        await update.message.reply_text(f"❓ {q}")
+        await update.message.reply_text(
+            f"❓ السؤال:\n\n{question}"
+        )
+
         return
 
-    # ================= ANSWER =================
-    c.execute("SELECT answer FROM active_q WHERE user_id=?", (uid,))
+    # ================= CHECK ANSWER =================
+    c.execute(
+        "SELECT answer FROM active_q WHERE user_id=?",
+        (uid,)
+    )
+
     active = c.fetchone()
 
     if active:
-        correct = active[0]
 
-        if text.lower() == correct.lower():
+        correct_answer = active[0]
+
+        if text.lower() == correct_answer.lower():
+
             points += 5
-            await update.message.reply_text("✅ صحيح +5")
-        else:
-            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
 
-        c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
+            await update.message.reply_text(
+                "✅ إجابة صحيحة +5 نقاط"
+            )
+
+        else:
+
+            await update.message.reply_text(
+                f"❌ إجابة خاطئة\n\n"
+                f"✔ الجواب الصحيح: {correct_answer}"
+            )
+
+        c.execute(
+            "DELETE FROM active_q WHERE user_id=?",
+            (uid,)
+        )
+
         conn.commit()
 
     # ================= UPDATE =================
@@ -144,25 +207,28 @@ f"""👤 معلوماتك
     new_title = get_title(messages)
 
     c.execute("""
-        UPDATE users
-        SET points=?, messages=?, title=?
-        WHERE user_id=?
-    """, (points, messages, new_title, uid))
+    UPDATE users
+    SET points=?, messages=?, title=?, name=?
+    WHERE user_id=?
+    """, (points, messages, new_title, name, uid))
 
     conn.commit()
 
     # ================= LEVEL UP =================
     if new_title != old_title:
+
         if GROUP_ID != 0:
+
             try:
                 await context.bot.send_message(
                     chat_id=GROUP_ID,
-                    text=f"""🎉 ترقية جديدة!
-
-👤 {name}
-🏅 {new_title}
-💬 {messages} رسالة"""
+                    text=
+                    f"🎉 ترقية جديدة!\n\n"
+                    f"👤 {name}\n"
+                    f"🏅 اللقب: {new_title}\n"
+                    f"💬 الرسائل: {messages}"
                 )
+
             except:
                 pass
 
@@ -170,7 +236,14 @@ f"""👤 معلوماتك
 app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 STABLE CLEAN BOT RUNNING")
+app.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle
+    )
+)
+
+print("🚀 BOT WORKING")
+
 app.run_polling()
