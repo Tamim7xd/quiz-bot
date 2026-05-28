@@ -1,45 +1,36 @@
 import os
 import sqlite3
-import random
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
 
-# ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS users (
+# ================= DB =================
+c.execute("""CREATE TABLE IF NOT EXISTS users(
 user_id INTEGER PRIMARY KEY,
 name TEXT,
 points INTEGER DEFAULT 0,
 messages INTEGER DEFAULT 0,
 title TEXT DEFAULT '🌱 عضو جديد',
 locked INTEGER DEFAULT 0
-)
-""")
+)""")
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS questions (
-user_id INTEGER PRIMARY KEY,
-answer TEXT
-)
-""")
+c.execute("""CREATE TABLE IF NOT EXISTS logs(
+text TEXT
+)""")
 
 conn.commit()
 
 # ================= STATE =================
 state = {}
 
-# ================= 50 TITLES =================
-TITLES = [
-"🌱 مبتدئ","🌿 متعلم","⚡ نشيط","🔥 متفاعل","🚀 متقدم",
+# ================= TITLES =================
+TITLES = ["🌱 مبتدئ","🌿 متعلم","⚡ نشيط","🔥 متفاعل","🚀 متقدم",
 "🎯 محترف","⭐ مميز","🏅 بطل","🥇 نجم","👑 قائد",
 "💎 خبير","🏆 أسطورة","⚔️ محارب","🛡️ حارس","🌟 سوبر",
 "💥 خارق","🎮 لاعب","🧠 ذكي","📚 مثقف","🌍 رحّالة",
@@ -48,10 +39,12 @@ TITLES = [
 "🧠 Genius","🔥 Master","⚔️ Fighter","🛡 Defender","🌟 Ultra",
 "💥 Beast","🎮 Gamer","📚 Scholar","🌍 Explorer","💠 Myth",
 "👑 Emperor","💎 Titan","🚀 Rocket","⚡ Flash","🔥 Omega",
-"🏆 Supreme","🌟 Apex","🎯 Boss","👑 GOD","💎 Final"
-]
+"🏆 Supreme","🌟 Apex","🎯 Boss","👑 GOD","💎 Final"]
 
-# ================= SYSTEM =================
+# ================= UTIL =================
+def level(p): return p // 200
+def title(p): return TITLES[level(p)] if level(p) < len(TITLES) else TITLES[-1]
+
 def register(uid, name):
     c.execute("SELECT user_id FROM users WHERE user_id=?", (uid,))
     if not c.fetchone():
@@ -59,212 +52,135 @@ def register(uid, name):
                   (uid, name, 0, 0, "🌱 عضو جديد", 0))
         conn.commit()
 
-def level(points):
-    return points // 200
-
-def progress(points):
-    return points % 200
-
-def get_title(points):
-    lvl = level(points)
-    return TITLES[lvl] if lvl < len(TITLES) else TITLES[-1]
-
-def xp_bar(points):
-    return "█" * (progress(points)//20) + "░" * (10 - (progress(points)//20))
-
-def question():
-    return random.choice([
-        ("ما عاصمة العراق؟","بغداد"),
-        ("ما عاصمة فرنسا؟","باريس"),
-        ("ما أكبر دولة؟","روسيا"),
-        ("ما أصغر دولة؟","الفاتيكان"),
-        ("ما أطول نهر؟","النيل"),
-        ("ما غاز التنفس؟","الأكسجين"),
-        ("كم عدد القارات؟","7"),
-        ("ما قبلة المسلمين؟","الكعبة"),
-        ("من أول نبي؟","آدم"),
-        ("ما أكبر كوكب؟","المشتري")
-    ])
-
 # ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     register(update.effective_user.id, update.effective_user.first_name)
-    await update.message.reply_text("👋 أهلاً بك في النظام")
+    await update.message.reply_text("👋 أهلاً بك")
 
 # ================= ADMIN PANEL =================
-async def admin(update: Update, context):
+async def admin(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
     kb = [
         [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
-        [InlineKeyboardButton("📊 إحصائيات", callback_data="stats")]
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data="stats")],
+        [InlineKeyboardButton("📢 رسالة", callback_data="send")]
     ]
 
     await update.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= USERS =================
-async def users(update: Update, context):
+async def users(update, context):
     q = update.callback_query
     await q.answer()
 
-    c.execute("SELECT user_id,name,points FROM users ORDER BY points DESC LIMIT 25")
+    c.execute("SELECT user_id,name,points FROM users ORDER BY points DESC LIMIT 30")
     rows = c.fetchall()
 
     kb = [[InlineKeyboardButton(f"{n} | {p}", callback_data=f"user_{i}")] for i,n,p in rows]
 
     await q.message.reply_text("👥 الأعضاء", reply_markup=InlineKeyboardMarkup(kb))
 
-# ================= PROFILE =================
-async def profile(update: Update, context):
+# ================= USER PROFILE =================
+async def user_profile(update, context):
     q = update.callback_query
     await q.answer()
 
     uid = int(q.data.split("_")[1])
 
-    c.execute("SELECT name,points,title,locked FROM users WHERE user_id=?", (uid,))
-    name, points, title, locked = c.fetchone()
+    c.execute("SELECT name,points,title FROM users WHERE user_id=?", (uid,))
+    name, points, t = c.fetchone()
 
     kb = [
-        [InlineKeyboardButton("➕ إضافة", callback_data=f"add_{uid}")],
+        [InlineKeyboardButton("➕ نقاط", callback_data=f"add_{uid}")],
         [InlineKeyboardButton("➖ خصم", callback_data=f"sub_{uid}")],
-        [InlineKeyboardButton("🔒 قفل/فتح", callback_data=f"lock_{uid}")],
-        [InlineKeyboardButton("📨 سؤال", callback_data=f"q_{uid}")],
+        [InlineKeyboardButton("🎖 لقب", callback_data=f"title_{uid}")],
+        [InlineKeyboardButton("📢 تنبيه", callback_data=f"alert_{uid}")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="users")]
     ]
 
     await q.message.reply_text(f"""
 👤 {name}
-
-💰 النقاط: {points}
-🎖 اللقب: {title}
-🔒 الحالة: {"مقفول" if locked else "مفتوح"}
-📊 المستوى: {level(points)}
-{xp_bar(points)} {progress(points)}/200
+💰 {points}
+🏅 {t}
 """, reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= ADD / SUB =================
 async def add(update, context):
     q = update.callback_query
     await q.answer()
-    state["action"] = ("add", int(q.data.split("_")[1]))
-    await q.message.reply_text("➕ أرسل العدد")
+    state["a"] = ("add", int(q.data.split("_")[1]))
+    await q.message.reply_text("➕ أرسل الرقم")
 
 async def sub(update, context):
     q = update.callback_query
     await q.answer()
-    state["action"] = ("sub", int(q.data.split("_")[1]))
-    await q.message.reply_text("➖ أرسل العدد")
+    state["a"] = ("sub", int(q.data.split("_")[1]))
+    await q.message.reply_text("➖ أرسل الرقم")
 
-# ================= LOCK =================
-async def lock(update, context):
+# ================= TITLE =================
+async def set_title(update, context):
     q = update.callback_query
     await q.answer()
+    state["a"] = ("title", int(q.data.split("_")[1]))
+    await q.message.reply_text("🎖 أرسل اللقب")
 
-    uid = int(q.data.split("_")[1])
+# ================= ALERT =================
+async def alert(update, context):
+    q = update.callback_query
+    await q.answer()
+    state["a"] = ("alert", int(q.data.split("_")[1]))
+    await q.message.reply_text("📢 أرسل التنبيه")
 
-    c.execute("SELECT locked FROM users WHERE user_id=?", (uid,))
-    l = c.fetchone()[0]
-
-    c.execute("UPDATE users SET locked=? WHERE user_id=?", (0 if l else 1, uid))
-    conn.commit()
-
-    await q.message.reply_text("🔄 تم التبديل")
-
-# ================= QUESTIONS =================
-async def handle(update: Update, context):
+# ================= HANDLE =================
+async def handle(update, context):
 
     uid = update.effective_user.id
     text = update.message.text
-
     register(uid, update.effective_user.first_name)
 
-    # ===== ADMIN ACTION =====
-    if uid == ADMIN_ID and "action" in state:
+    if uid != ADMIN_ID or "a" not in state:
+        return
 
-        action, target = state["action"]
+    action, target = state["a"]
 
-        c.execute("SELECT points,name FROM users WHERE user_id=?", (target,))
-        points, name = c.fetchone()
+    c.execute("SELECT name,points FROM users WHERE user_id=?", (target,))
+    name, points = c.fetchone()
 
-        old_title = get_title(points)
+    if action == "add":
+        points += int(text)
+        msg = f"➕ تم إضافة {text} لـ {name}"
 
-        if action == "add":
-            points += int(text)
-        else:
-            points -= int(text)
-            if points < 0:
-                points = 0
+    elif action == "sub":
+        points -= int(text)
+        if points < 0: points = 0
+        msg = f"➖ تم خصم {text} من {name}"
 
-        new_title = get_title(points)
+    elif action == "title":
+        c.execute("UPDATE users SET title=? WHERE user_id=?", (text, target))
+        conn.commit()
+        msg = f"🎖 تم تغيير لقب {name}"
 
+    elif action == "alert":
+        await context.bot.send_message(target, f"📢 تنبيه: {text}")
+        msg = f"📢 تم إرسال تنبيه لـ {name}"
+
+    if action in ["add","sub"]:
         c.execute("UPDATE users SET points=? WHERE user_id=?", (points, target))
         conn.commit()
 
-        await update.message.reply_text(f"✅ {name} → {points}")
-
-        # 🔥 إشعار ترقية
-        if new_title != old_title:
-            await context.bot.send_message(
-                GROUP_ID,
-                f"🎉 ترقية جديدة!\n👤 {name}\n🏅 {new_title}"
-            )
-
-        state.pop("action")
-        return
-
-    # ===== QUESTION =====
-    if text in ["سؤال","سوال"]:
-        q,a = question()
-        c.execute("REPLACE INTO questions VALUES (?,?)", (uid,a))
-        conn.commit()
-        await update.message.reply_text(q)
-        return
-
-    c.execute("SELECT answer FROM questions WHERE user_id=?", (uid,))
-    row = c.fetchone()
-
-    add = 1
-
-    if row:
-        if text.lower() == row[0].lower():
-            add = 5
-            await update.message.reply_text("✅ صحيح +5")
-        else:
-            await update.message.reply_text(f"❌ خطأ: {row[0]}")
-
-        c.execute("DELETE FROM questions WHERE user_id=?", (uid,))
-        conn.commit()
-
-    # ===== UPDATE USER =====
-    c.execute("SELECT points,messages,title,locked,name FROM users WHERE user_id=?", (uid,))
-    points,msg,title,locked,name = c.fetchone()
-
-    old = get_title(points)
-
-    points += add
-    msg += 1
-
-    new = get_title(points) if locked == 0 else title
-
-    c.execute("UPDATE users SET points=?,messages=?,title=? WHERE user_id=?",
-              (points,msg,new,uid))
-    conn.commit()
-
-    await update.message.reply_text(f"""
-💰 {points}
-🎖 {new}
-📊 {xp_bar(points)}
-""")
-
-    if old != new:
         await context.bot.send_message(
             GROUP_ID,
-            f"🎉 ترقية!\n👤 {name}\n🏅 {new}"
+            f"📊 {msg}\n💰 النقاط الآن: {points}"
         )
 
+    state.pop("a")
+
+    await update.message.reply_text("✅ تم")
+
 # ================= ROUTER =================
-async def router(update: Update, context):
+async def router(update, context):
 
     q = update.callback_query
     d = q.data
@@ -273,7 +189,7 @@ async def router(update: Update, context):
         await users(update, context)
 
     elif d.startswith("user_"):
-        await profile(update, context)
+        await user_profile(update, context)
 
     elif d.startswith("add_"):
         await add(update, context)
@@ -281,8 +197,11 @@ async def router(update: Update, context):
     elif d.startswith("sub_"):
         await sub(update, context)
 
-    elif d.startswith("lock_"):
-        await lock(update, context)
+    elif d.startswith("title_"):
+        await set_title(update, context)
+
+    elif d.startswith("alert_"):
+        await alert(update, context)
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
@@ -293,5 +212,5 @@ app.add_handler(CommandHandler("admin", admin))
 app.add_handler(CallbackQueryHandler(router))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("BOT V4 RUNNING")
+print("ADMIN OS V5 RUNNING")
 app.run_polling()
