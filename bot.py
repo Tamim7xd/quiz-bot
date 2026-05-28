@@ -22,7 +22,8 @@ points INTEGER DEFAULT 0,
 messages INTEGER DEFAULT 0,
 title TEXT DEFAULT '🌱 عضو جديد',
 start_time INTEGER,
-last_time INTEGER
+last_time INTEGER,
+locked INTEGER DEFAULT 0
 )
 """)
 
@@ -46,7 +47,7 @@ TITLES = [
 "🧠 Genius","🔥 Master","⚔️ Fighter","🛡 Defender","🌟 Ultra",
 "💥 Beast","🎮 Gamer","📚 Scholar","🌍 Explorer","💠 Myth",
 "👑 Emperor","💎 Titan","🚀 Rocket","⚡ Flash","🔥 Omega",
-"🏆 Supreme","🌟 Apex","🎯 Boss2","👑 GOD","💎 Final"
+"🏆 Supreme","🌟 Apex","🎯 LegendX","👑 GOD","💎 Final"
 ]
 
 # ================= HELPERS =================
@@ -61,36 +62,35 @@ def hours(start):
 def level(p):
     return p // 200
 
-def title(p):
+def get_title(p):
     return TITLES[min(level(p), len(TITLES)-1)]
 
-# ================= REGISTER =================
+# ================= USER =================
 def reg(u):
     c.execute("SELECT * FROM users WHERE user_id=?", (u.id,))
     if not c.fetchone():
         c.execute("""
-        INSERT INTO users VALUES (?,?,?,?,?,?,?)
+        INSERT INTO users VALUES (?,?,?,?,?,?,?,0)
         """, (u.id, u.first_name, 0, 0, "🌱 عضو جديد", now(), now()))
         conn.commit()
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg(update.effective_user)
-    await update.message.reply_text("👋 أهلاً بك في النظام")
+    await update.message.reply_text("👋 أهلاً بك في ULTRA PRO MAX")
 
-# ================= QUESTION SYSTEM =================
+# ================= QUESTION =================
 QUESTIONS = [
 ("ما عاصمة العراق؟","بغداد"),
 ("ما أكبر كوكب؟","المشتري"),
-("ما لغة القرآن؟","العربية"),
-("كم عدد قارات العالم؟","7"),
-("ما عاصمة السعودية؟","الرياض")
+("كم عدد القارات؟","7"),
+("ما لغة القرآن؟","العربية")
 ]
 
 def get_q():
     return random.choice(QUESTIONS)
 
-async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask(update: Update, context):
     u = update.effective_user
     q,a = get_q()
 
@@ -113,28 +113,26 @@ async def info(update: Update, context):
 📊 معلوماتك
 ━━━━━━━━━━
 👤 {d[1]}
-💰 نقاط: {d[2]}
-💬 رسائل: {d[3]}
-🏅 لقب: {d[4]}
-⏱ ساعات: {hours(d[5])}
-🔥 مستوى: {level(d[2])}
+💰 {d[2]}
+💬 {d[3]}
+🏅 {d[4]}
+⏱ {hours(d[5])} ساعة
+🔥 مستوى {level(d[2])}
 ━━━━━━━━━━
 """
     await update.message.reply_text(msg)
 
-# ================= SMART HANDLE =================
+# ================= HANDLE =================
 async def handle(update: Update, context):
-
     u = update.effective_user
     text = update.message.text.lower()
     reg(u)
 
-    # update stats
     c.execute("UPDATE users SET messages=messages+1, points=points+1, last_time=? WHERE user_id=?",
               (now(), u.id))
     conn.commit()
 
-    # ================= QUESTION ANSWER =================
+    # ================= QUESTION =================
     c.execute("SELECT answer FROM active_q WHERE user_id=?", (u.id,))
     q = c.fetchone()
 
@@ -143,35 +141,32 @@ async def handle(update: Update, context):
             c.execute("UPDATE users SET points=points+5 WHERE user_id=?", (u.id,))
             await update.message.reply_text("✅ صحيح +5 نقاط")
         else:
-            await update.message.reply_text(f"❌ خطأ الإجابة: {q[0]}")
-
+            await update.message.reply_text(f"❌ خطأ: {q[0]}")
         c.execute("DELETE FROM active_q WHERE user_id=?", (u.id,))
         conn.commit()
 
-    # ================= SMART COMMANDS =================
+    # ================= SMART =================
     if "معلوماتي" in text or "info" in text:
         await info(update, context)
 
     if "نقاطي" in text:
-        d = get(u.id)
-        await update.message.reply_text(f"💰 نقاطك: {d[2]}")
+        await update.message.reply_text(f"💰 {get(u.id)[2]}")
 
-    if "رسائلي" in text or "رسالاتي" in text:
-        d = get(u.id)
-        await update.message.reply_text(f"💬 رسائلك: {d[3]}")
+    if "رسائلي" in text:
+        await update.message.reply_text(f"💬 {get(u.id)[3]}")
 
-    if "ساعاتي" in text or "وقت" in text or "نشاط" in text:
-        d = get(u.id)
-        await update.message.reply_text(f"⏱ نشاطك: {hours(d[5])} ساعة")
+    if "ساعاتي" in text or "وقت" in text:
+        await update.message.reply_text(f"⏱ {hours(get(u.id)[5])} ساعة")
 
     if "سوال" in text or "سؤال" in text:
         await ask(update, context)
 
-    # ================= UPDATE TITLE =================
+    # ================= TITLE UPDATE =================
     d = get(u.id)
-    new_title = title(d[2])
-    c.execute("UPDATE users SET title=? WHERE user_id=?", (new_title, u.id))
-    conn.commit()
+    if d[7] == 0:  # locked
+        new = get_title(d[2])
+        c.execute("UPDATE users SET title=? WHERE user_id=?", (new, u.id))
+        conn.commit()
 
 # ================= ADMIN =================
 async def admin(update: Update, context):
@@ -183,7 +178,7 @@ async def admin(update: Update, context):
         [InlineKeyboardButton("📊 الإحصائيات", callback_data="stats")]
     ]
 
-    await update.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("🛠 ULTRA ADMIN", reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= CALLBACK =================
 async def cb(update: Update, context):
@@ -194,9 +189,9 @@ async def cb(update: Update, context):
         c.execute("SELECT name,points FROM users ORDER BY points DESC LIMIT 10")
         rows = c.fetchall()
 
-        msg = "👥 الأعضاء:\n"
+        msg = "👥 الأعضاء\n"
         for i,r in enumerate(rows,1):
-            msg += f"{i}- {r[0]} | {r[1]} نقطة\n"
+            msg += f"{i}- {r[0]} | {r[1]}\n"
 
         await q.message.reply_text(msg)
 
@@ -206,9 +201,9 @@ async def cb(update: Update, context):
 
         await q.message.reply_text(f"""
 📊 إحصائيات
-💰 نقاط: {s[0]}
-💬 رسائل: {s[1]}
-👥 أعضاء: {s[2]}
+💰 {s[0]}
+💬 {s[1]}
+👥 {s[2]}
 """)
 
 # ================= RUN =================
@@ -222,5 +217,5 @@ app.add_handler(CommandHandler("سؤال", ask))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 app.add_handler(CallbackQueryHandler(cb))
 
-print("BOT PRO MAX RUNNING")
+print("ULTRA PRO MAX RUNNING 🚀")
 app.run_polling()
