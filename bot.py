@@ -8,7 +8,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN", "PUT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-GROUP_ID = int(os.getenv("GROUP_ID", "0"))
+GROUP_ID = os.getenv("GROUP_ID", None)
+GROUP_ID = int(GROUP_ID) if GROUP_ID else None
 
 # ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
@@ -24,7 +25,8 @@ title TEXT DEFAULT '🌱 عضو',
 start_time INTEGER,
 last_time INTEGER,
 locked INTEGER DEFAULT 0,
-rewards INTEGER DEFAULT 0
+rewards INTEGER DEFAULT 0,
+warnings INTEGER DEFAULT 0
 )
 """)
 
@@ -37,7 +39,7 @@ answer TEXT
 
 conn.commit()
 
-# ================= TITLES 50 =================
+# ================= TITLES =================
 TITLES = [
 "🌱 مبتدئ","🌿 ناشئ","⚡ نشيط","🔥 متفاعل","🚀 متقدم",
 "🎯 محترف","⭐ مميز","🏅 بطل","🥇 نجم","👑 قائد",
@@ -60,25 +62,33 @@ def hours(start):
         return 0
     return round((now() - start) / 3600, 1)
 
-def level(money):
-    return money // 200
+def level(m):
+    return m // 200
 
-def title(money):
-    return TITLES[min(level(money), len(TITLES)-1)]
+def get_title(m):
+    return TITLES[min(level(m), len(TITLES)-1)]
 
 # ================= REGISTER =================
 def reg(u):
     c.execute("SELECT user_id FROM users WHERE user_id=?", (u.id,))
     if not c.fetchone():
         c.execute("""
-        INSERT INTO users VALUES (?,?,?,?,?,?,?,0,0)
+        INSERT INTO users VALUES (?,?,?,?,?,?,?,0,0,0)
         """, (u.id, u.first_name, 0, 0, "🌱 عضو", now(), now()))
         conn.commit()
+
+# ================= GROUP MSG =================
+async def group(msg):
+    if GROUP_ID:
+        try:
+            await app.bot.send_message(GROUP_ID, msg)
+        except:
+            pass
 
 # ================= START =================
 async def start(update: Update, context):
     reg(update.effective_user)
-    await update.message.reply_text("👋 أهلاً بك في نظام الفلوس 💰")
+    await update.message.reply_text("💰 البوت شغال الآن (ULTRA MONEY PRO)")
 
 # ================= QUESTIONS =================
 QUESTIONS = [
@@ -111,7 +121,7 @@ async def info(update: Update, context):
     reg(u)
     d = get(u.id)
 
-    msg = f"""
+    txt = f"""
 📊 معلوماتك
 ━━━━━━━━━━
 👤 {d[1]}
@@ -122,7 +132,7 @@ async def info(update: Update, context):
 🔥 مستوى: {level(d[2])}
 ━━━━━━━━━━
 """
-    await update.message.reply_text(msg)
+    await update.message.reply_text(txt)
 
 # ================= HANDLE =================
 async def handle(update: Update, context):
@@ -131,18 +141,22 @@ async def handle(update: Update, context):
     reg(u)
 
     c.execute("""
-    UPDATE users SET messages=messages+1, money=money+1, last_time=? WHERE user_id=?
+    UPDATE users 
+    SET messages=messages+1,
+        money=money+1,
+        last_time=?
+    WHERE user_id=?
     """, (now(), u.id))
     conn.commit()
 
     d = get(u.id)
 
-    # auto title
+    # title update
     if d[7] == 0:
-        c.execute("UPDATE users SET title=? WHERE user_id=?", (title(d[2]), u.id))
+        c.execute("UPDATE users SET title=? WHERE user_id=?", (get_title(d[2]), u.id))
         conn.commit()
 
-    # ================= QUESTION =================
+    # QUESTION CHECK
     c.execute("SELECT answer FROM questions WHERE user_id=?", (u.id,))
     q = c.fetchone()
 
@@ -150,26 +164,29 @@ async def handle(update: Update, context):
         if text.strip() == q[0].lower():
             c.execute("UPDATE users SET money=money+5,rewards=rewards+1 WHERE user_id=?", (u.id,))
             await update.message.reply_text("✅ صحيح +5 فلوس")
+            await group(f"🎁 مكافأة: {u.first_name} أجاب صحيح")
         else:
             await update.message.reply_text(f"❌ خطأ: {q[0]}")
         c.execute("DELETE FROM questions WHERE user_id=?", (u.id,))
         conn.commit()
 
-    # ================= MONEY COMMANDS =================
-    if any(x in text for x in ["فلوسي","فلوس","راتبي","راتب","money","mymoney"]):
-        await update.message.reply_text(f"💰 فلوسك: {d[2]}")
+    # COMMANDS
+    if any(x in text for x in ["فلوسي","فلوس","راتبي","راتب","mymoney"]):
+        await update.message.reply_text(f"💰 {d[2]}")
 
     if any(x in text for x in ["معلوماتي","info"]):
         await info(update, context)
 
     if any(x in text for x in ["رسائلي","رسالاتي"]):
-        await update.message.reply_text(f"💬 رسائلك: {d[3]}")
+        await update.message.reply_text(f"💬 {d[3]}")
 
     if any(x in text for x in ["ساعاتي","وقت","نشاطي"]):
         await update.message.reply_text(f"⏱ {hours(d[5])} ساعة")
 
     if "سوال" in text or "سؤال" in text:
         await ask(update, context)
+
+    await group(f"📌 نشاط: {u.first_name} 💰{d[2]} 🏅{d[4]}")
 
 # ================= ADMIN =================
 async def admin(update: Update, context):
@@ -178,10 +195,11 @@ async def admin(update: Update, context):
 
     kb = [
         [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
-        [InlineKeyboardButton("📊 الإحصائيات", callback_data="stats")]
+        [InlineKeyboardButton("📊 الإحصائيات", callback_data="stats")],
+        [InlineKeyboardButton("❓ سؤال", callback_data="ask")]
     ]
 
-    await update.message.reply_text("🛠 لوحة الأدمن 💰", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
 
 # ================= CALLBACK =================
 async def cb(update: Update, context):
@@ -192,22 +210,27 @@ async def cb(update: Update, context):
         c.execute("SELECT name,money FROM users ORDER BY money DESC LIMIT 10")
         rows = c.fetchall()
 
-        txt = "👥 الأعضاء:\n"
+        txt = "👥 الأعضاء\n"
         for i,r in enumerate(rows,1):
             txt += f"{i}- {r[0]} | 💰 {r[1]}\n"
 
         await q.message.reply_text(txt)
 
     if q.data == "stats":
-        c.execute("SELECT SUM(money),SUM(messages),COUNT(*) FROM users")
+        c.execute("SELECT SUM(money),SUM(messages),COUNT(*),SUM(rewards) FROM users")
         s = c.fetchone()
 
         await q.message.reply_text(f"""
 📊 إحصائيات
-💰 مجموع الفلوس: {s[0]}
-💬 الرسائل: {s[1]}
-👥 الأعضاء: {s[2]}
+💰 {s[0]}
+💬 {s[1]}
+👥 {s[2]}
+🎁 {s[3]}
 """)
+
+    if q.data == "ask":
+        q2,a = get_q()
+        await q.message.reply_text(f"❓ {q2}")
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
@@ -220,5 +243,5 @@ app.add_handler(CommandHandler("سؤال", ask))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 app.add_handler(CallbackQueryHandler(cb))
 
-print("💰 MONEY ULTRA PRO RUNNING")
+print("ULTRA MONEY PRO FIXED RUNNING 🚀")
 app.run_polling()
