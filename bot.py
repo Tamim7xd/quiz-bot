@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT,
     points INTEGER DEFAULT 0,
     messages INTEGER DEFAULT 0,
-    title TEXT DEFAULT '🌱 جديد',
+    title TEXT DEFAULT '🌱 مبتدئ',
     title_locked INTEGER DEFAULT 0
 )
 """)
@@ -50,31 +50,49 @@ QUESTIONS = [
     ("ما عاصمة فرنسا؟", "باريس"),
     ("ما عاصمة مصر؟", "القاهرة"),
     ("ما أكبر كوكب؟", "المشتري"),
+    ("ما أطول نهر؟", "النيل"),
     ("من مكتشف الجاذبية؟", "نيوتن"),
-    ("ما أطول نهر في العالم؟", "النيل"),
-    ("ما عاصمة السعودية؟", "الرياض"),
     ("ما لغة اليابان؟", "اليابانية"),
 ]
 
 def get_question():
     return random.choice(QUESTIONS)
 
-# ================= TITLES SYSTEM =================
-def get_title(messages):
+# ================= TITLES (POINT BASED) =================
+def get_title(points):
 
-    if messages <= 149:
-        return "🌱 جديد"
+    if points < 150:
+        return "🌱 مبتدئ"
 
-    level = (messages - 150) // 100
+    level = (points - 150) // 200
 
     titles = [
-        "🌿 مبتدئ","⚡ متعلم","🔥 نشيط","🚀 متفاعل","🎯 متقدم",
-        "⭐ مميز","🏅 محترف","🥇 نجم","👑 قائد","💎 خبير",
-        "🏆 أسطورة","⚔️ محارب","🛡️ حارس","🌟 سوبر ستار","💥 خارق",
-        "🎮 لاعب","🧩 محلل","📚 مثقف","🌍 رحّالة","⚙️ عبقري"
+        "🌿 متعلم",
+        "⚡ نشيط",
+        "🔥 متفاعل",
+        "🚀 متقدم",
+        "🎯 محترف",
+        "⭐ مميز",
+        "🏅 بطل",
+        "🥇 نجم",
+        "👑 قائد",
+        "💎 خبير",
+        "🏆 أسطورة",
+        "⚔️ محارب",
+        "🛡️ حارس",
+        "🌟 سوبر ستار",
+        "💥 خارق",
+        "🎮 لاعب محترف",
+        "🧩 محلل",
+        "📚 مثقف",
+        "🌍 رحّالة",
+        "💠 أسطورة عليا"
     ]
 
-    return titles[level] if level < len(titles) else "💠 أسطورة"
+    if level < len(titles):
+        return titles[level]
+
+    return "👑 ملك الأساطير"
 
 # ================= ADMIN MEMORY =================
 admin_state = {}
@@ -110,24 +128,28 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ================= USERS LIST =================
+# ================= USERS =================
 async def show_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
     await q.answer()
 
-    c.execute("SELECT user_id,name FROM users LIMIT 30")
+    c.execute("SELECT user_id,name,title FROM users LIMIT 30")
     users = c.fetchall()
 
     keyboard = []
 
     for u in users:
+        uid, name, title = u
+
+        icon = "👑" if uid == ADMIN_ID else "🟢"
+
         keyboard.append([
-            InlineKeyboardButton(f"👤 {u[1]}", callback_data=f"user_{u[0]}")
+            InlineKeyboardButton(f"{icon} {name}", callback_data=f"user_{uid}")
         ])
 
     await q.message.reply_text(
-        "👥 اختر عضو:",
+        "👥 قائمة الأعضاء:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -142,7 +164,7 @@ async def user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📊 معلومات العضو", callback_data=f"info_{uid}")],
         [InlineKeyboardButton("➕ إضافة نقاط", callback_data=f"addp_{uid}")],
-        [InlineKeyboardButton("🏅 تعديل لقب", callback_data=f"title_{uid}")],
+        [InlineKeyboardButton("✏️ تعديل لقب", callback_data=f"title_{uid}")],
         [InlineKeyboardButton("🔓 إرجاع تلقائي", callback_data=f"unlock_{uid}")]
     ]
 
@@ -151,7 +173,7 @@ async def user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ================= USER INFO =================
+# ================= INFO =================
 async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
@@ -174,8 +196,7 @@ async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
         )
 
-# ================= ADMIN ACTION MEMORY =================
-# (action, target_id)
+# ================= ADMIN STATE =================
 admin_state = {}
 
 # ================= ADD POINTS =================
@@ -210,23 +231,19 @@ async def unlock(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uid = int(q.data.split("_")[1])
 
-    c.execute(
-        "UPDATE users SET title_locked=0 WHERE user_id=?",
-        (uid,)
-    )
-
+    c.execute("UPDATE users SET title_locked=0 WHERE user_id=?", (uid,))
     conn.commit()
 
-    await q.message.reply_text("🔓 تم إعادة اللقب للنظام التلقائي")
+    await q.message.reply_text("🔓 تم تفعيل النظام التلقائي")
 
-# ================= HANDLE MESSAGES =================
+# ================= HANDLE =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uid = update.effective_user.id
     text = update.message.text.strip()
     name = update.effective_user.first_name
 
-    # ================= ADMIN MODE =================
+    # ================= ADMIN ACTION =================
     if uid == ADMIN_ID and ADMIN_ID in admin_state:
 
         action, target = admin_state[ADMIN_ID]
@@ -252,7 +269,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("✅ تم إضافة النقاط")
 
             except:
-                await update.message.reply_text("❌ خطأ في الرقم")
+                await update.message.reply_text("❌ خطأ")
 
             admin_state.pop(ADMIN_ID)
             return
@@ -276,7 +293,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not c.fetchone():
 
         c.execute(
-            "INSERT INTO users VALUES (?,?,0,0,'🌱 جديد',0)",
+            "INSERT INTO users VALUES (?,?,0,0,'🌱 مبتدئ',0)",
             (uid, name)
         )
 
@@ -286,16 +303,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "معلوماتي":
 
         c.execute("SELECT points,messages,title FROM users WHERE user_id=?", (uid,))
-        row = c.fetchone()
-
-        points, messages, title = row if row else (0,0,"🌱 جديد")
+        p, m, title = c.fetchone()
 
         await update.message.reply_text(
             f"""✨ ─── معلوماتك ─── ✨
 
 👤 الاسم: {name}
-💬 الرسائل: {messages}
-💰 النقاط: {points}
+💬 الرسائل: {m}
+💰 النقاط: {p}
 🏅 اللقب: {title}
 """
         )
@@ -321,11 +336,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         correct = active[0]
 
         if text.lower() == correct.lower():
-            await update.message.reply_text("✅ صحيح +5 نقاط")
             add = 5
+            await update.message.reply_text("✅ صحيح +5 نقاط")
         else:
-            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
             add = 0
+            await update.message.reply_text(f"❌ خطأ\nالإجابة: {correct}")
 
         c.execute("DELETE FROM active_q WHERE user_id=?", (uid,))
         conn.commit()
@@ -333,22 +348,20 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         add = 1
 
-    # ================= UPDATE USER =================
-    c.execute("SELECT points,messages,title,title_locked FROM users WHERE user_id=?", (uid,))
-    p, m, title, locked = c.fetchone()
+    # ================= UPDATE =================
+    c.execute("SELECT points,messages,title_locked FROM users WHERE user_id=?", (uid,))
+    p, m, locked = c.fetchone()
+
+    old_title = get_title(p)
 
     p += add
     m += 1
 
-    # ================= TITLE SYSTEM =================
-    old_title = title
-
     if locked == 0:
-        new_title = get_title(m)
+        new_title = get_title(p)
     else:
-        new_title = title
+        new_title = old_title
 
-    # ================= SAVE =================
     c.execute(
         "UPDATE users SET points=?,messages=?,title=? WHERE user_id=?",
         (p, m, new_title, uid)
@@ -367,11 +380,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(
                     chat_id=GROUP_ID,
-                    text=f"""🎊 ترقية جديدة!
+                    text=f"""
+🎊 ترقية جديدة 🎊
 
 👤 {name}
 🏅 {new_title}
-🔥 مبروك لقبك الجديد
+
+🔥 مبروك الترقية!
 """
                 )
             except:
@@ -411,5 +426,5 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(router))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("🚀 FULL SYSTEM BOT RUNNING")
+print("🚀 BOT FULL POINT SYSTEM RUNNING")
 app.run_polling()
