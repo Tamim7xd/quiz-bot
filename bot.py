@@ -8,7 +8,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
 
-# ================= DB =================
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -23,17 +22,18 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
+c.execute("""
+CREATE TABLE IF NOT EXISTS active_q (
+    user_id INTEGER PRIMARY KEY,
+    answer TEXT
+)
+""")
+
 conn.commit()
 
 admin_state = {}
 
-# ================= XP =================
-def xp_bar(points):
-    percent = (points % 200) / 200
-    bar = int(percent * 10)
-    return "█" * bar + "░" * (10 - bar)
-
-# ================= TITLES 50 =================
+# ================= TITLES (50) =================
 def get_title(points):
     if points < 200:
         return "🌱 عضو جديد"
@@ -45,13 +45,17 @@ def get_title(points):
         "💎 خبير","⚡ محترف","🔥 قوي","👑 قائد","🏆 بطل",
         "🌟 نجم","🚀 متقدم","🎯 ذكي","🧠 عبقري","📚 مثقف",
         "🌍 رحّال","🛡️ حارس","⚔️ محارب","🎮 لاعب","💥 خارق",
-        "🏅 مميز","🥇 ذهبي","👑 ملك الملوك","💎 أسطورة","⚡ خارق",
-        "🔥 أسطورة النار","🌟 أسطورة الضوء","🚀 أسطورة الفضاء",
-        "👑 الملك الأعلى","🏆 أسطورة العالم"
+        "👑 ملك العالم","🏆 أسطورة عليا","⚡ ملك القوة",
+        "🔥 سيد اللعبة","💎 أسطورة مطلقة"
     ]
 
-    level = points // 200
-    return titles[level] if level < len(titles) else "👑 أسطورة مطلقة"
+    return titles[min(len(titles)-1, points // 200)]
+
+# ================= XP BAR =================
+def xp_bar(points):
+    p = (points % 200) / 200
+    bar = int(p * 10)
+    return "█" * bar + "░" * (10 - bar)
 
 # ================= REGISTER =================
 def register(uid, name):
@@ -63,17 +67,19 @@ def register(uid, name):
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [[InlineKeyboardButton("🛠 لوحة الأدمن", callback_data="admin")]] if update.effective_user.id == ADMIN_ID else []
-    await update.message.reply_text("👋 أهلاً بك", reply_markup=InlineKeyboardMarkup(kb) if kb else None)
+    if update.effective_user.id == ADMIN_ID:
+        kb = [[InlineKeyboardButton("🛠 لوحة الأدمن", callback_data="admin")]]
+        await update.message.reply_text("👋 أهلاً أدمن", reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        await update.message.reply_text("👋 أهلاً بك في البوت")
 
 # ================= ADMIN PANEL =================
-async def admin(update, context):
+async def admin_panel(update, context):
     q = update.callback_query
     await q.answer()
 
     kb = [
         [InlineKeyboardButton("👥 الأعضاء", callback_data="users")],
-        [InlineKeyboardButton("📢 إرسال للقناة", callback_data="send")]
     ]
 
     await q.message.reply_text("🛠 لوحة الأدمن", reply_markup=InlineKeyboardMarkup(kb))
@@ -86,7 +92,8 @@ async def users(update, context):
     c.execute("SELECT user_id,name,points,title FROM users LIMIT 30")
     rows = c.fetchall()
 
-    kb = [[InlineKeyboardButton(f"{n} | {p} | {t}", callback_data=f"user_{u}")] for u,n,p,t in rows]
+    kb = [[InlineKeyboardButton(f"{n} | {p} | {t}", callback_data=f"user_{u}")]
+          for u,n,p,t in rows]
 
     await q.message.reply_text("👥 الأعضاء:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -98,15 +105,15 @@ async def user_menu(update, context):
     uid = int(q.data.split("_")[1])
 
     kb = [
-        [InlineKeyboardButton("➕ نقاط", callback_data=f"add_{uid}")],
-        [InlineKeyboardButton("➖ خصم", callback_data=f"sub_{uid}")],
-        [InlineKeyboardButton("✏️ لقب", callback_data=f"title_{uid}")],
-        [InlineKeyboardButton("🔒 قفل/فتح", callback_data=f"lock_{uid}")]
+        [InlineKeyboardButton("➕ إضافة نقاط", callback_data=f"add_{uid}")],
+        [InlineKeyboardButton("➖ خصم نقاط", callback_data=f"sub_{uid}")],
+        [InlineKeyboardButton("✏️ تعديل لقب", callback_data=f"title_{uid}")],
+        [InlineKeyboardButton("🔒 قفل/فتح اللقب", callback_data=f"lock_{uid}")]
     ]
 
     await q.message.reply_text("⚙️ إدارة العضو", reply_markup=InlineKeyboardMarkup(kb))
 
-# ================= HANDLE =================
+# ================= HANDLE MESSAGE =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uid = update.effective_user.id
@@ -136,7 +143,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute("UPDATE users SET points=? WHERE user_id=?", (new, target))
             conn.commit()
 
-            await update.message.reply_text(f"❌ تم خصم {amount} من {tname}\n📝 {reason}")
+            await update.message.reply_text(
+                f"❌ تم خصم {amount} من {tname}\n📝 السبب: {reason}"
+            )
 
             if GROUP_ID:
                 await context.bot.send_message(
@@ -150,23 +159,23 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ================= SYSTEM =================
     c.execute("SELECT points,messages,title_locked,title FROM users WHERE user_id=?", (uid,))
-    p, m, locked, old = c.fetchone()
+    p, m, locked, old_title = c.fetchone()
 
     p += 1
     m += 1
 
-    new_title = get_title(p) if locked == 0 else old
+    new_title = get_title(p) if locked == 0 else old_title
 
     c.execute("UPDATE users SET points=?,messages=?,title=? WHERE user_id=?",
               (p,m,new_title,uid))
     conn.commit()
 
-    # ================= XP =================
+    # ================= MESSAGE =================
     await update.message.reply_text(
         f"""👤 {name}
 
-💰 {p} نقطة
-🏆 {new_title}
+💰 نقاط: {p}
+🏆 لقب: {new_title}
 
 📊 XP
 [{xp_bar(p)}] {p%200}/200
@@ -179,7 +188,7 @@ async def router(update, context):
     d = q.data
 
     if d == "admin":
-        await admin(update, context)
+        await admin_panel(update, context)
     elif d == "users":
         await users(update, context)
     elif d.startswith("user_"):
@@ -187,9 +196,10 @@ async def router(update, context):
 
 # ================= RUN =================
 app = Application.builder().token(TOKEN).build()
+
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(router))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("BOT RUNNING 🚀")
+print("🚀 PRO MAX BOT RUNNING")
 app.run_polling()
