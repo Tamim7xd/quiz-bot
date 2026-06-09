@@ -754,4 +754,36 @@ class Database:
     # ==================== دوال إحصائيات ====================
     
     def get_top_users(self, limit: int = 10, sort_by: str = 'messages_count') -> List[Dict]:
-        """
+        """الحصول على ترتيب المستخدمين"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                SELECT user_id, username, first_name, {sort_by}, balance, level
+                FROM users
+                ORDER BY {sort_by} DESC
+                LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_server_stats(self) -> Dict:
+        """إحصائيات عامة للبوت"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) as total_users FROM users')
+            total_users = cursor.fetchone()['total_users']
+            
+            cursor.execute('SELECT SUM(messages_count) as total_messages FROM users')
+            total_messages = cursor.fetchone()['total_messages'] or 0
+            
+            cursor.execute('SELECT SUM(balance) as total_balance FROM users')
+            total_balance = cursor.fetchone()['total_balance'] or 0
+            
+            cursor.execute('SELECT COUNT(*) as total_warnings FROM warnings')
+            total_warnings = cursor.fetchone()['total_warnings']
+            
+            return {
+                'total_users': total_users,
+                'total_messages': total_messages,
+                'total_balance': total_balance,
+                'total_warnings': total_warnings
+            }
